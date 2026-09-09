@@ -44,12 +44,43 @@
     // rodar três vezes não cria três linhas. As contas de 7 e 30 dias comparam
     // contra dias fechados, então não dependem da hora da última foto.
     "crons": [
-      "0 11,15,21 * * *",  // 08:00, 12:00 e 18:00 de Brasília
-      "0 2 * * 1"          // segunda de madrugada — o apanhado da semana
+      // NO MODO ECONÔMICO estes horários são de sobra: as rodadas são leves.
+      // 11 (08h BRT) a rodada do dia — redes, ciclo, dólar, cópia, avisos
+      // 15 (12h BRT) só o que é urgente
+      // 21 (18h BRT) a rodada da tarde
+      //  3 e 7 (00h e 04h BRT) só o ciclo, caladas
+      //
+      // NO PLANO PAGO ("ECONOMICO": "false") acrescente 19 e 23 à lista pra as
+      // pools se refazerem quatro vezes ao dia:  "0 3,7,11,15,19,21,23 * * *"
+      // Acrescentar hora à lista é de graça; criar OUTRA linha é que bate no
+      // teto de 5 gatilhos por conta — a Cloudflare conta expressões.
+      "0 3,7,11,15,21 * * *",
+      "0 2 * * 1"          // segunda, 23:00 de Brasília — o apanhado da semana
     ]
   },
 
   "vars": {
+    // ==========================================================================
+    // >>> A ESCOLHA QUE DECIDE O RESTO <<<
+    //
+    //   "true"  = plano GRATUITO da Cloudflare (o padrão, e o certo pra começar)
+    //   "false" = plano PAGO (US$ 5/mês), com tudo automático na nuvem
+    //
+    // POR QUE ISTO EXISTE. O grátis dá 10 MILISSEGUNDOS de processamento por
+    // rodada. O radar baixa 8,8 MB de protocolos e 11,8 MB de pools do
+    // DefiLlama — cada um estoura esse limite sozinho. Não é a frequência: é o
+    // peso de UMA rodada.
+    //
+    // No modo econômico a nuvem cuida do que é leve e constante (redes, ciclo,
+    // carteira, vigia das posições, avisos no Telegram, cópias de segurança) e
+    // o SEU COMPUTADOR cuida do que é pesado: `node medir-pools.js`, uma vez
+    // por dia. Tudo funciona; só a parte pesada não mora na nuvem.
+    //
+    // Trocando pra "false" (com o plano pago ativo), a nuvem passa a fazer tudo
+    // sozinha e você nunca mais roda nada à mão.
+    // ==========================================================================
+    "ECONOMICO": "true",
+
     // A URL do SEU projeto Supabase (Settings -> API). Sem barra no final.
     // Só é preciso se você for usar a parte de carteira (INSTALAR.md, passo 9).
     "SUPABASE_URL": "https://SEU-PROJETO.supabase.co"

@@ -19,7 +19,7 @@
  *    concordar acabam discordando — normalmente no pior dia.
  */
 
-export const VERSAO = "v2-a-regua-do-curso";
+export const VERSAO = "v3-modo-economico";
 
 /* Só o número: "v18-posicao-na-orca" vira 18. É por ele que se compara. */
 export const NUMERO_DA_VERSAO = Number((VERSAO.match(/^v(\d+)/) || [])[1] || 0);

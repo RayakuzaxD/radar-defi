@@ -9,6 +9,60 @@ Faça na ordem. O passo 5 depende do 4, e o 6 depende do 5.
 
 ---
 
+## 0. Escolha o seu caminho: grátis ou US$ 5/mês
+
+**Esta é a única decisão do roteiro, e ela já vem escolhida** — o padrão é o
+gratuito. Leia, e só mexa se quiser o outro.
+
+O plano gratuito da Cloudflare dá **10 milissegundos de processamento** por
+rodada. O radar baixa do DefiLlama:
+
+| fonte | tamanho |
+|---|---|
+| redes | 64 KB — cabe folgado |
+| protocolos | **8,8 MB** — estoura sozinho |
+| pools | **11,8 MB** — estoura sozinho |
+
+Não é a frequência que não cabe: é o peso de **uma** rodada. Rodar uma vez por
+dia em vez de quatro não muda nada.
+
+### 🆓 Modo econômico — o padrão
+
+A nuvem cuida do que é leve e constante. O seu computador cuida do que é pesado,
+com um comando por dia:
+
+```bash
+node medir-pools.js
+```
+
+| na nuvem, sozinho | no seu computador, 1×/dia |
+|---|---|
+| radar de redes | as pools (chão, cartaz, classes) |
+| o ciclo e os indicadores do curso | a qualidade das redes |
+| a carteira, posições e preço médio | |
+| o vigia e os avisos no Telegram | |
+| as cópias de segurança | |
+
+**Tudo funciona.** A única diferença é onde a parte pesada roda. Se você pular
+um dia, nada se perde — a aba Pools mostra a medida do último dia em que você
+rodou, **com a data à mostra**, sem fingir que é de hoje.
+
+> Dica: dá pra agendar o comando no seu sistema (Agendador de Tarefas no
+> Windows, `cron` no Linux/Mac) e nunca mais lembrar dele.
+
+### 💳 Tudo na nuvem — US$ 5/mês
+
+Com o **Workers Paid** ativo, a nuvem faz tudo sozinha e você nunca roda nada à
+mão. Duas mudanças no `wrangler.jsonc`:
+
+1. `"ECONOMICO": "false"`
+2. acrescente `19,23` à lista de horários (o comentário lá explica)
+
+São US$ 5 fixos: as franquias do plano pago são grandes o bastante pra que o
+radar não gere um centavo além da assinatura.
+
+---
+
 ## 1. Criar o bot no Telegram
 
 No Telegram, procure por **@BotFather** e mande:
@@ -311,6 +365,35 @@ OAuth Client ID (grátis, ~10 min):
    chave secreta do cliente não é usada — pode até apagar.
 
 Com o campo vazio, o botão do Drive simplesmente não aparece. Nada mais muda.
+
+---
+
+## 12. As pools, no modo econômico
+
+Se você ficou no gratuito (o padrão), este é o comando que mantém a aba Pools
+viva:
+
+```bash
+node medir-pools.js
+```
+
+Ele baixa as ~12 MB de pools, calcula chão, abismo e classe de cada uma,
+calcula a qualidade das redes, e manda tudo pro banco. Demora alguns minutos e
+não tem limite de processamento nenhum, porque roda no seu computador.
+
+Pra ver o que ele faria sem enviar:
+
+```bash
+node medir-pools.js --seco
+```
+
+Ele escreve um `medida-de-hoje.sql` que você pode abrir e ler antes de mandar.
+
+> **Ele NÃO reimplementa a medição.** Usa exatamente as mesmas funções que a
+> nuvem usaria, com um banco de mentira que anota o SQL em vez de executar.
+> Duas cópias de uma conta divergem no primeiro conserto feito num lugar só —
+> e a divergência apareceria como um número estranho na sua tela, meses depois,
+> sem pista de origem.
 
 ---
 

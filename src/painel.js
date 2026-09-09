@@ -413,7 +413,23 @@ export function paginaDoPainel() {
   .rkPct { font-weight: 700; }
   .rkNota { color: var(--fraco); font-size: 12px; }
 
+  /* As posições encerradas: presentes, e fora do caminho. */
+  /* O pontinho que diz "isto está vivo". Discreto: quem olha o preço não pode
+     ser puxado pelo enfeite ao lado dele. */
+  .pulso { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--sobe); margin-right: 5px; vertical-align: middle;
+    animation: baterPulso 2.4s ease-in-out infinite; }
+  @keyframes baterPulso { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+  @media (prefers-reduced-motion: reduce) { .pulso { animation: none } }
+
   .assinatura { opacity: 0.5; font-size: 11px; text-align: center; margin: 26px 0 14px; color: var(--fraco); }
+  .fim { margin-top: 10px; border-top: 1px dashed var(--linha); padding-top: 8px; }
+  .fimTopo { width: 100%; display: flex; align-items: center; gap: 7px; cursor: pointer;
+    background: transparent; border: 0; padding: 5px 0; color: var(--fraco);
+    font: inherit; font-size: 12px; text-align: left; }
+  .fimSoma { margin-left: auto; font-weight: 700; }
+  .fim .onde { color: var(--fraco); }
+  .fimCorpo { margin-top: 4px; }
   .cicloCurso { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--linha); }
   .cursoTopo { display: flex; justify-content: space-between; align-items: baseline;
     gap: 10px; font-size: 13px; }
@@ -1129,13 +1145,70 @@ async function buscarBitcoin() {
     var d = await r.json();
     var t = d && d.tokens && d.tokens.BTC;
     if (!t || !(t.preco > 0)) return false;
-    btcVivo = { preco: t.preco, variacao24h: t.variacao24h, quando: d.quando || null };
-    return true;
+    /* SÓ AVISA QUANDO MUDOU. Quem chama redesenha a tela ao receber "true", e
+       redesenhar de minuto em minuto pra escrever o mesmo número seria fazer a
+       tela piscar à toa enquanto ele lê. O relógio bate; a tela só se mexe
+       quando há o que mostrar. */
+    var mudou = !btcVivo || btcVivo.preco !== t.preco;
+    btcVivo = { preco: t.preco, variacao24h: t.variacao24h, quando: d.quando || null,
+                lidoEm: Date.now() };
+    return mudou;
   } catch (e) {
     /* Falhar aqui nao pode apagar o bloco: sem preco vivo ele mostra o da
        manha e DIZ que e da manha. */
     return false;
   }
+}
+
+/* O PREÇO DO BITCOIN, VIVO NA TELA.
+ *
+ * Pedido dele em 09/09/2026: "pode deixar o preço do BTC em tempo real nessa
+ * tela, ele é o centro de todo o mercado, merece destaque". E é o método dele
+ * falando: o Bitcoin define o ciclo, o ciclo define a meta, a meta decide quais
+ * pools passam na régua. Um número congelado no alto dessa cadeia envelhece
+ * tudo o que vem depois.
+ *
+ * TRÊS REGRAS, e cada uma existe por um motivo:
+ *
+ * 1. SÓ COM A ABA "HOJE" ABERTA. É a única tela que mostra o preço. Buscar
+ *    enquanto ele está na Carteira seria gastar rede pra ninguém ver.
+ *
+ * 2. PARA QUANDO A TELA SOME. O painel é um aplicativo instalado no celular
+ *    dele; um relógio rodando com o telefone no bolso é bateria queimada por
+ *    número que ninguém está lendo. visibilitychange desliga e religa.
+ *
+ * 3. AO VOLTAR, BUSCA NA HORA. Voltar do bolso e ver o preço de vinte minutos
+ *    atrás por mais um minuto é pior do que não ter relógio nenhum — porque aí
+ *    ele confia no número velho achando que é vivo.
+ *
+ * O intervalo é o mesmo limite que buscarBitcoin já respeitava: um minuto.
+ * Não porque o preço demore a mudar, mas porque é o que esta tela decide —
+ * ciclo, meta e faixa não viram em trinta segundos. */
+var relogioDoBtc = null;
+
+function pararRelogioDoBtc() {
+  if (relogioDoBtc) { clearInterval(relogioDoBtc); relogioDoBtc = null; }
+}
+
+function ligarRelogioDoBtc() {
+  pararRelogioDoBtc();
+  if (aba !== "hoje") return;
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+  relogioDoBtc = setInterval(function () {
+    if (aba !== "hoje" || document.visibilityState === "hidden") { pararRelogioDoBtc(); return; }
+    buscarBitcoin().then(function (mudou) { if (mudou && aba === "hoje") desenhar(); });
+  }, 60000);
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") { pararRelogioDoBtc(); return; }
+    if (aba !== "hoje") return;
+    /* Voltou: busca AGORA, sem esperar o próximo minuto. */
+    btcBuscadoEm = 0;
+    buscarBitcoin().then(function (mudou) { if (mudou && aba === "hoje") desenhar(); });
+    ligarRelogioDoBtc();
+  });
 }
 
 /* Onde o preco esta na faixa, recalculado com o preco de agora.
@@ -1210,8 +1283,11 @@ function blocoDoBitcoin() {
 
   var variacao = serie.length > 1 ? (serie[serie.length - 1] / serie[0] - 1) * 100 : null;
 
+  /* O RÓTULO DIZ SE ESTÁ VIVO. "agora" era uma promessa que a célula nem sempre
+     cumpria; com o pontinho, ela cumpre ou confessa. */
   var celulas = '<div class="numeros">' +
-    celula("agora", hoje ? fmt(hoje) : "—", "", true) +
+    celula(vivo ? '<span class="pulso"></span>agora' : "agora ·  da manhã",
+      hoje ? fmt(hoje) : "—", "", true) +
     celula("média 200d", l.mediaHoje ? fmt(l.mediaHoje) : "—") +
     celula("contra ela", contra != null ? pc(contra) : "—", contra >= 0 ? "sobe" : "desce") +
     celula("desse lado há",
@@ -1226,7 +1302,8 @@ function blocoDoBitcoin() {
       (btcVivo.variacao24h != null
         ? " (" + (btcVivo.variacao24h >= 0 ? "+" : "") + btcVivo.variacao24h.toFixed(1) + "% em 24h)"
         : "") +
-      '. A média de 200 dias, o gráfico e o regime são da leitura de ' +
+      '. Ele se atualiza sozinho a cada minuto enquanto esta tela estiver aberta. ' +
+      'A média de 200 dias, o gráfico e o regime são da leitura de ' +
       esc(l.dia || "hoje") + ', que roda uma vez por dia.</div>'
     : '<div class="puxa">Não consegui o preço de agora — estes números são da leitura de ' +
       esc(l.dia || "hoje") + '.</div>';
@@ -5951,6 +6028,26 @@ function avisoDeMovimento(l) {
  * caiu.
  *
  * Verde dentro, vermelho fora. O losango e onde o preco esta agora. */
+/* Quantas casas o preço do par precisa pra que os três números da faixa sejam
+ * DIFERENTES entre si.
+ *
+ * Duas casas fixas quebravam nas pools sem stablecoin: a SOL/ETH dele mostrava
+ * "0.04 · 0.04 · 0.04" — fundo, preço e topo iguais na tela, e o texto logo
+ * abaixo dizendo "1,73% até o fundo, 2,28% até o topo". A barra se contradizia
+ * numa linha de distância.
+ *
+ * A régua é a grandeza do número: preço de par pode ser 78.000 (BTC em USDC) ou
+ * 0,0413 (SOL em ETH), e um formato só não serve para os dois. */
+function numeroDaFaixa(v) {
+  var n = Number(v);
+  if (!isFinite(n)) return "—";
+  var casas = Math.abs(n) >= 1000 ? 2
+    : Math.abs(n) >= 1 ? 3
+    : Math.abs(n) >= 0.01 ? 5
+    : 8;
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+}
+
 function barraDaFaixa(pos) {
   var r = pos && pos.leitura;
   if (!r) return "";
@@ -5959,9 +6056,9 @@ function barraDaFaixa(pos) {
 
   return '<div class="faixa ' + classe + '">' +
     '<div class="faixaPontas">' +
-      '<span>' + pos.faixa.fundo.toFixed(2) + '</span>' +
-      '<span>' + pos.preco.toFixed(2) + '</span>' +
-      '<span>' + pos.faixa.topo.toFixed(2) + '</span>' +
+      '<span>' + numeroDaFaixa(pos.faixa.fundo) + '</span>' +
+      '<span>' + numeroDaFaixa(pos.preco) + '</span>' +
+      '<span>' + numeroDaFaixa(pos.faixa.topo) + '</span>' +
     '</div>' +
     '<div class="faixaBarra"><i style="left:' + onde.toFixed(1) + '%"></i></div>' +
     '<div class="faixaTexto">' + esc(r.texto) + '</div>' +
@@ -6215,6 +6312,49 @@ function linhaEdicao(l, i) {
   '</div>';
 }
 
+/* O bloco das posições encerradas de uma caixinha.
+ *
+ * NASCE RECOLHIDO. Ele abre a carteira pra olhar o que está vivo; o histórico é
+ * uma consulta, não uma leitura diária. E vem com o RESULTADO SOMADO na própria
+ * linha do título, porque esse é o número que responde sozinho a pergunta "e as
+ * que eu já fechei?" — sem precisar abrir nada.
+ *
+ * O estado de aberto/fechado usa o mesmo cofre das caixinhas encolhidas, com
+ * chave própria ("fim:renda"). Uma preferência de tela mora no aparelho, não no
+ * banco: é escolha de quem está olhando, não dado da carteira. */
+function blocoDasFechadas(cx, linhas) {
+  if (!linhas || !linhas.length) return "";
+
+  var chave = "fim:" + cx.chave;
+  var aberto = !encolhida(chave);
+
+  /* O resultado somado. Só entra o que dá pra somar — linha sem conta fechada
+     não vira zero, fica de fora, e a contagem diz quantas foram. */
+  var soma = 0, quantas = 0;
+  linhas.forEach(function (l) {
+    var r = contaDoFechamento(movsDaLinha(l.f.chave));
+    if (r && isFinite(r.resultado)) { soma += r.resultado; quantas++; }
+  });
+
+  var resumo = quantas
+    ? '<span class="fimSoma ' + (soma >= 0 ? "sobe" : "desce") + '">' +
+        (soma >= 0 ? "+" : "") + esc(dinheiroNa(soma, "USD")) + '</span>'
+    : "";
+
+  return '<div class="fim' + (aberto ? " aberto" : "") + '">' +
+    '<button class="fimTopo" data-fim="' + esc(chave) + '">' +
+      '<span class="seta">' + (aberto ? "▾" : "▸") + '</span> ' +
+      'posições fechadas <span class="onde">' + linhas.length + '</span>' +
+      resumo +
+    '</button>' +
+    (aberto
+      ? '<div class="fimCorpo">' +
+          linhas.map(function (l) { return linhaFechadaVista(l); }).join("") +
+        '</div>'
+      : "") +
+  '</div>';
+}
+
 function secaoDaCaixa(cx, d, c) {
   var ref = referenciaDaCaixa(cx.chave);
   var bruto = alvos ? alvos[cx.chave] : null;
@@ -6269,9 +6409,27 @@ function secaoDaCaixa(cx, d, c) {
       '<div class="cxMais"><button class="btPronto">Pronto</button></div>' +
     '</div>';
   } else {
-    corpo = d.linhas.length
-      ? d.linhas.map(function (l) { return linhaVista(l, d.total); }).join("")
-      : "";
+    /* AS FECHADAS SAEM DA FRENTE, e a razão é dele: "viu o tamanho que fica
+     * esse monte de informação? tem que ficar escondido em algum lugar
+     * agrupado, pra que não atrapalhe as novas posições que eu abrir".
+     *
+     * Ele tem razão, e o motivo é mais fundo que espaço na tela. A caixinha
+     * responde "o que eu TENHO aqui" — e posição fechada não é o que ele tem,
+     * é o que ele teve. As duas coisas disputando as mesmas linhas fazem a
+     * pergunta ficar sem resposta clara justamente quando ele abre uma posição
+     * nova e quer vê-la.
+     *
+     * NÃO SOME: vira um bloco recolhido, com a contagem e o resultado somado à
+     * mostra. Fechar uma posição é o momento em que a conta final existe — e a
+     * conta final é a única coisa que sobra de uma posição encerrada. Esconder
+     * de vez seria apagar o que a posição ensinou. */
+    var abertas = [], encerradas = [];
+    d.linhas.forEach(function (l) {
+      (linhaFechada(l.f) ? encerradas : abertas).push(l);
+    });
+    corpo =
+      abertas.map(function (l) { return linhaVista(l, d.total); }).join("") +
+      blocoDasFechadas(cx, encerradas);
   }
 
   /* Editar ganha da preferência de encolher: abrir os campos e não mostrá-los
@@ -6800,6 +6958,10 @@ function ligarCarteira() {
     } catch (e) { copias = []; }
     desenhar();
   };
+
+  document.querySelectorAll(".fimTopo").forEach(function (b) {
+    b.onclick = function () { virarEncolhida(b.dataset.fim); desenhar(); };
+  });
 
   document.querySelectorAll(".sbBt").forEach(function (b) {
     b.onclick = function () { irParaSubAba(b.dataset.sub); };
@@ -7340,8 +7502,9 @@ function desenhar() {
        com o número da manhã e se corrige sozinha, em vez de ficar em branco
        enquanto uma chamada de rede acontece. */
     buscarBitcoin().then(function (veio) { if (veio && aba === "hoje") desenhar(); });
+    ligarRelogioDoBtc();
   }
-  else if (aba === "pools") alvo.innerHTML = telaDePools();
+  else if (aba === "pools") { pararRelogioDoBtc(); alvo.innerHTML = telaDePools(); }
   else if (aba === "grandes") alvo.innerHTML = telaDeRedes("grandes");
   else if (aba === "pequenas") alvo.innerHTML = telaDeRedes("pequenas");
   else if (aba === "carteira") { alvo.innerHTML = telaDaCarteira(); ligarCarteira(); }
