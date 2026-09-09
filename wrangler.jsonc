@@ -1,0 +1,59 @@
+{
+  // Radar DeFi — acorda sozinho, olha o mercado e avisa no Telegram.
+  //
+  // Mora na Cloudflare, não no seu computador: mede o mercado três vezes por
+  // dia mesmo com tudo desligado. Também serve uma página (o painel), então
+  // responde a pedidos HTTP, não só ao relógio.
+  //
+  // Segredos, postos com `npx wrangler secret put NOME` (nunca no código):
+  //   TELEGRAM_TOKEN        — o token do seu bot, do @BotFather
+  //   GATILHO               — palavra secreta que vira o endereço do webhook
+  //   SOLANA_RPC            — sua chave da Helius, pra ler posições on-chain
+  //   SUPABASE_SERVICE_KEY  — a chave de serviço do SEU projeto Supabase
+  //
+  // O passo a passo inteiro está no INSTALAR.md.
+  "name": "radar-defi",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-02",
+
+  // Sem domínio próprio o worker responde em radar-defi.SEU-USUARIO.workers.dev.
+  // Se você tiver um domínio na Cloudflare, dá pra apontar um subdomínio:
+  //
+  //   "routes": [{ "pattern": "radar.seudominio.com", "custom_domain": true }]
+  //
+  // ATENÇÃO se for instalar como aplicativo no celular: pra um PWA, o endereço
+  // É a identidade. Mudar de endereço depois cria um app NOVO, com ícone novo.
+  // Decida o endereço antes de instalar, não depois.
+
+  "d1_databases": [
+    {
+      "binding": "BANCO",
+      "database_name": "radar-defi",
+      // Troque pelo id que `npx wrangler d1 create radar-defi` devolver.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+
+  "triggers": {
+    // Horários em UTC. Os três do dia (08:00, 12:00 e 18:00 de Brasília) cabem
+    // numa expressão só de propósito: o plano grátis dá 5 cron triggers POR
+    // CONTA, e a Cloudflare conta expressões, não disparos. Se precisar de mais
+    // um horário, acrescente à lista de horas — não crie outra linha.
+    //
+    // A foto do dia é gravada com INSERT OR REPLACE na chave (dia, rede) —
+    // rodar três vezes não cria três linhas. As contas de 7 e 30 dias comparam
+    // contra dias fechados, então não dependem da hora da última foto.
+    "crons": [
+      "0 11,15,21 * * *",  // 08:00, 12:00 e 18:00 de Brasília
+      "0 2 * * 1"          // segunda de madrugada — o apanhado da semana
+    ]
+  },
+
+  "vars": {
+    // A URL do SEU projeto Supabase (Settings -> API). Sem barra no final.
+    // Só é preciso se você for usar a parte de carteira (INSTALAR.md, passo 9).
+    "SUPABASE_URL": "https://SEU-PROJETO.supabase.co"
+  },
+
+  "observability": { "enabled": true }
+}

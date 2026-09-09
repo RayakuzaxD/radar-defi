@@ -1,0 +1,10 @@
+# Segredos locais do wrangler — NUNCA entram no repositório.
+.dev.vars
+
+# Coisas de máquina
+node_modules/
+.wrangler/
+
+# Provas de posição real (bytes lidos da carteira de alguém).
+# Cada instalação pode gravar as suas; as de ninguém ficam no repositório.
+provas/

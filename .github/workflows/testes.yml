@@ -1,0 +1,57 @@
+# Os testes rodam sozinhos em toda proposta de mudança.
+#
+# POR QUE ISTO EXISTE. O projeto é aberto a contribuição, e quem recebe a
+# contribuição nem sempre lê código. Então a máquina lê primeiro: toda proposta
+# chega com ✓ ou ✗ ao lado, e o ✗ diz exatamente qual conferência quebrou.
+#
+# São 27 conjuntos, e três deles guardam regras que não são sobre programação:
+#
+#   testar-metodo.js     — nenhuma frase do radar manda fazer nada. Reprova
+#                          verbo de ordem (saia, compre, invista, recomendo...).
+#   testar-painel.js     — o vocabulário é o do curso (taxas, incentivos), e a
+#                          página não quebra em nenhum estado.
+#   testar-narrativa.js  — todo número tem a data da medição junto.
+#
+# Uma mudança boa de código que quebre uma dessas é uma mudança que muda o que
+# a ferramenta É. Melhor descobrir aqui do que depois de publicada.
+#
+# `pull_request` e NÃO `pull_request_target`: o primeiro roda o código proposto
+# sem acesso a segredo nenhum do repositório. É a diferença entre conferir uma
+# contribuição e dar a chave da casa pra ela.
+
+name: testes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  testar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Sem `npm install`: o projeto não tem uma única dependência externa, de
+      # propósito. Nada de CDN, nada de pacote — só o que o navegador e o Node
+      # já trazem. Isso é o que faz esta etapa levar segundos em vez de minutos.
+      - name: Rodar os 27 conjuntos
+        run: npm run testar
+
+      # Dois conjuntos (Orca e Kamino) conferem a leitura da blockchain contra
+      # os bytes de uma posição REAL, e essas provas não vêm no repositório —
+      # dentro delas vai o endereço da carteira de alguém. Eles se declaram
+      # PULADOS, alto, em vez de fingir que passaram.
+      - name: Lembrar o que ficou de fora
+        if: success()
+        run: |
+          echo "Orca e Kamino ficam pulados aqui: as provas de posição real não"
+          echo "vêm no repositório. Quem mexer nesses arquivos precisa gravar as"
+          echo "próprias provas e rodar localmente. Veja o topo de cada um."
