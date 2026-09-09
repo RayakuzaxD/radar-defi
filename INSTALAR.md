@@ -397,6 +397,27 @@ Ele escreve um `medida-de-hoje.sql` que você pode abrir e ler antes de mandar.
 
 ---
 
+## Como atualizar
+
+Saiu conserto ou coisa nova no repositório? Dois comandos, na pasta do projeto:
+
+```bash
+git pull
+```
+
+```bash
+npx wrangler deploy
+```
+
+O banco e os segredos ficam intactos — atualizar troca só o código. Vale
+conferir o `/versao` do seu endereço depois: o número deve ter subido.
+
+> Consertos de erro grave são publicados aqui assim que encontrados na
+> instância original. Quem atualiza de vez em quando os recebe sem precisar
+> descobrir o erro sozinho.
+
+---
+
 ## Quando alguma coisa não vai
 
 **O bot não responde nada no Telegram.** O webhook não está ligado. Refaça o
