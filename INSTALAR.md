@@ -56,7 +56,9 @@ Com o **Workers Paid** ativo, a nuvem faz tudo sozinha e você nunca roda nada �
 mão. Duas mudanças no `wrangler.jsonc`:
 
 1. `"ECONOMICO": "false"`
-2. acrescente `19,23` à lista de horários (o comentário lá explica)
+
+E pronto — os horários não mudam. A nuvem passa a medir as pools sozinha, uma
+vez por dia, na rodada das 08h.
 
 São US$ 5 fixos: as franquias do plano pago são grandes o bastante pra que o
 radar não gere um centavo além da assinatura.

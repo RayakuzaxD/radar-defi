@@ -42,19 +42,20 @@
     //
     // A foto do dia é gravada com INSERT OR REPLACE na chave (dia, rede) —
     // rodar três vezes não cria três linhas. As contas de 7 e 30 dias comparam
-    // contra dias fechados, então não dependem da hora da última foto.
+    // TRÊS HORÁRIOS, e o de segunda.
+    //   11 (08h BRT) a medição do dia — ciclo, dólar, cópia de segurança, avisos
+    //   15 (12h BRT) só o que é urgente
+    //   21 (18h BRT) a rodada completa da tarde
+    //
+    // UMA MEDIÇÃO POR DIA de cada coisa, e isso é decisão, não limitação: o
+    // preço do Bitcoin já se atualiza sozinho na tela a cada minuto (no
+    // navegador), e o resto — chão de pool, média de 200 dias, estoque de
+    // stablecoin — muda devagar demais pra valer mais rodadas.
+    //
+    // Acrescentar hora à LISTA é de graça; criar outra LINHA é que bate no teto
+    // de 5 gatilhos por conta — a Cloudflare conta expressões, não disparos.
     "crons": [
-      // NO MODO ECONÔMICO estes horários são de sobra: as rodadas são leves.
-      // 11 (08h BRT) a rodada do dia — redes, ciclo, dólar, cópia, avisos
-      // 15 (12h BRT) só o que é urgente
-      // 21 (18h BRT) a rodada da tarde
-      //  3 e 7 (00h e 04h BRT) só o ciclo, caladas
-      //
-      // NO PLANO PAGO ("ECONOMICO": "false") acrescente 19 e 23 à lista pra as
-      // pools se refazerem quatro vezes ao dia:  "0 3,7,11,15,19,21,23 * * *"
-      // Acrescentar hora à lista é de graça; criar OUTRA linha é que bate no
-      // teto de 5 gatilhos por conta — a Cloudflare conta expressões.
-      "0 3,7,11,15,21 * * *",
+      "0 11,15,21 * * *",  // 08:00, 12:00 e 18:00 de Brasília
       "0 2 * * 1"          // segunda, 23:00 de Brasília — o apanhado da semana
     ]
   },

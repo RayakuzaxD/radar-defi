@@ -399,11 +399,10 @@ async function anotarAvisos(env, achados, agora) {
  * para uma por dia não muda nada.
  *
  * Então no modo econômico a nuvem cuida do que é leve e constante (redes,
- * ciclo, carteira, avisos) e o COMPUTADOR de quem usa cuida do que é pesado e
- * ocasional: `node medir-pools.js`, uma vez por dia, sem limite de
- * processamento nenhum.
+ * ciclo, carteira, vigia, avisos) e o COMPUTADOR de quem usa cuida do que é
+ * pesado: `node medir-pools.js`, uma vez por dia, sem limite de processamento.
  *
- * É o mesmo padrão que o semear-pools.js já usava — e pelo mesmo motivo. */
+ * É o mesmo padrão que o semear-pools.js já usava, e pelo mesmo motivo. */
 function modoEconomico(env) {
   const v = env?.ECONOMICO;
   return v === true || v === "true" || v === "sim" || v === "1";
@@ -411,8 +410,7 @@ function modoEconomico(env) {
 
 async function olharOMercado(economico = false) {
   /* Sem os 8,8 MB de protocolos: no modo econômico eles são medidos no
-     computador, junto com as pools. O retrato continua completo em redes,
-     que é a parte que cabe. */
+     computador, junto com as pools. */
   const [redes, stables, protocolos] = await Promise.all([
     redesAgora(), stablesAgora(),
     economico ? Promise.resolve(new Map()) : protocolosAgora(),
@@ -1695,8 +1693,7 @@ async function mandarCopias(env) {
   return mandadas;
 }
 
-async function rodada(env, { soUrgente = false, semanal = false, seco = false,
-                             medir = false, pools = false, semFalar = false } = {}) {
+async function rodada(env, { soUrgente = false, semanal = false, seco = false, medir = false } = {}) {
   /* O VIGIA VEM PRIMEIRO, e antes de tudo que é caro.
    *
    * Sair da faixa é a coisa mais urgente que o radar tem pra dizer: a posição
@@ -1736,28 +1733,30 @@ async function rodada(env, { soUrgente = false, semanal = false, seco = false,
   // Só a rodada da manhã mede a qualidade: é a parte cara, e as medidas mudam
   // devagar demais pra valer três vezes por dia.
   let avisoDeMedida = "";
-  /* O CICLO SE MEDE EM TODA RODADA, e não só de manhã.
+  /* UMA MEDIÇÃO POR DIA, DE CADA COISA.
    *
-   * Pedido dele em 09/09/2026: "as atualizações demoram muito, daria pra
-   * atualizar de 4 em 4 horas? essa que só vai acontecer às 8 é muito longa a
-   * espera".
+   * Isto já foi de 4 em 4 horas, por um dia. Ele pediu, eu fiz, e ele mesmo
+   * desfez no dia seguinte: "vi que não faz sentido várias por dia, pode
+   * deixar apenas uma por dia de cada, de 24 em 24 horas".
    *
-   * A espera existia por um erro de arrumação, não por custo. O `medir`
-   * pendurava quatro coisas de preços completamente diferentes no mesmo
-   * interruptor:
+   * Ele tem razão, e o motivo é uma coisa que a gente construiu no meio do
+   * caminho: o PREÇO DO BITCOIN JÁ SE ATUALIZA SOZINHO NA TELA, a cada minuto,
+   * direto no navegador. As rodadas extras estavam refrescando na nuvem um
+   * número que já chegava fresco por outro caminho — trabalho para ninguém.
    *
-   *   medirOCiclo      ~7 chamadas de rede, 1 escrita no banco
-   *   mandarCopias     2 chamadas, nenhuma escrita
-   *   cotação do dólar 1 chamada, 1 escrita
-   *   medirQualidade   MILHARES de escritas — foi o que estourou o D1 em 05/09
+   * E o resto do que elas mediam muda devagar por natureza: o chão de uma pool
+   * é medido sobre 30 dias, a média de 200 dias do Bitcoin anda um pouquinho
+   * por dia, o estoque de stablecoin do mundo se move em semanas. Medir de 4 em
+   * 4 horas dava a sensação de frescor sem entregar informação nova.
    *
-   * Só o último precisa ser diário. O ciclo custa quase nada e é o número mais
-   * importante da tela — o método inteiro pendura nele. Deixá-lo esperando o
-   * amanhecer porque o vizinho de linha é caro é o tipo de coisa que ninguém
-   * decidiu: só ficou. */
-  await medirOCiclo(env, retrato.dia);
-
+   * A LIÇÃO, e ela vale além daqui: a frequência certa de uma medida é a do que
+   * está sendo medido, não a da ansiedade de quem olha. Quando o número muda
+   * devagar, medir mais vezes só custa mais. */
   if (medir) {
+    // Antes da qualidade porque é barato (2 chamadas contra 16 MB de download)
+    // e porque o texto da manhã já quer o ciclo pronto.
+    await medirOCiclo(env, retrato.dia);
+
     /* A cópia da carteira. Dentro de try porque perder o backup de hoje é
        ruim, mas derrubar a rodada da manhã junto seria pior. */
     try { await mandarCopias(env); } catch { /* silêncio aqui é rodada de pé */ }
@@ -1779,32 +1778,16 @@ async function rodada(env, { soUrgente = false, semanal = false, seco = false,
         }));
       }
     } catch { /* silêncio aqui vira "sem cotação", não vira rodada quebrada */ }
-  }
 
-  /* AS POOLS, QUATRO VEZES AO DIA — 08h, 12h, 16h e 20h de Brasília.
-   *
-   * Pedido dele em 09/09/2026, depois de conferirmos o consumo real na conta:
-   * "pode deixar de 4 em 4 horas então, se ele aguenta as 4 atualizações
-   * diárias".
-   *
-   * AGUENTA, e agora isso é medida e não palpite. Em quatro dias de ciclo a
-   * conta acusou 373,83 mil escritas no banco de 50 milhões inclusos, e 15,19
-   * mil milissegundos de processamento de 30 milhões. Quadruplicar a parte
-   * pesada leva as escritas pra uns 22% da franquia e o processamento pra 1,5%.
-   * O painel de cobrança diz, com todas as letras: "All usage is within
-   * included tier limits".
-   *
-   * O QUE MUDA E O QUE NÃO MUDA. Isto refaz cartaz, chão, pior dia e as classes
-   * das ~3.800 pools. NÃO manda mensagem: as rodadas das 16h e 20h medem e vão
-   * embora caladas, como as do ciclo. Dado mais fresco na tela nunca vira aviso
-   * a mais no celular.
-   *
-   * A ressalva honesta, que vale ficar escrita: o CHÃO é medido sobre 30 dias e
-   * não muda em quatro horas. Quem se mexe rápido é o cartaz — justamente o
-   * número que este radar existe pra ele não usar. Ele ganha frescor de TVL, de
-   * classe e de pool nova; a régua principal continua andando no ritmo dela. */
-  if ((medir || pools) && !modoEconomico(env)) {
-    try {
+    /* A QUALIDADE DAS REDES E AS POOLS — só quando NÃO estamos no modo
+       econômico. No grátis isto roda no computador de quem usa, por
+       `node medir-pools.js`: são 12 MB de download e milhares de escritas, e
+       nenhum dos dois cabe em 10 milissegundos.
+       Isto refaz cartaz, chão, pior dia e classe das ~3.800 pools: é a parte
+       cara — 12 MB de download e milhares de escritas — e a que mais justifica
+       ser diária. O chão é medido sobre 30 dias; ele não muda entre uma manhã
+       e a próxima. */
+    if (!modoEconomico(env)) try {
       await medirQualidade(env, retrato.dia, retrato.protocolos, new Map(
         retrato.fichas.map((f) => [f.rede, { tvl: f.tvl }]),
       ));
@@ -1815,11 +1798,6 @@ async function rodada(env, { soUrgente = false, semanal = false, seco = false,
     }
   }
 
-  /* A RODADA CALADA PARA AQUI. Ela mediu tudo o que tinha que medir; o resto
-     desta função é avaliar achados e falar, e falar não é o trabalho dela. */
-  if (semFalar) {
-    return { dia: retrato.dia, avisos: 0, calou: true, mediu: true };
-  }
   const chat = seco ? "seco" : await chatDoAviso(env);
   if (!chat) return { erro: "ainda não sei pra qual chat falar" };
 
@@ -2180,50 +2158,22 @@ export default {
     const hora = new Date(evento.scheduledTime).getUTCHours();
     const dia = new Date(evento.scheduledTime).getUTCDay();
 
-    /* AS RODADAS QUE SÓ MEDEM O CICLO — 00h, 04h, 16h e 20h de Brasília.
+    /* TRÊS RODADAS POR DIA, e cada uma faz uma coisa diferente:
      *
-     * Elas NÃO FALAM. Não montam o retrato do mercado, não avaliam achado, não
-     * mandam mensagem. Medem o ciclo, gravam, e vão embora.
+     *   11 (08h BRT) mede tudo — ciclo, pools, qualidade, dólar — manda a cópia
+     *                de segurança da carteira e fala o que achou
+     *   15 (12h BRT) só interrompe se for urgente
+     *   21 (18h BRT) a rodada completa da tarde
+     *   segunda 02h  o apanhado da semana
      *
-     * O silêncio é a parte importante do desenho. Ele pediu dado mais fresco na
-     * tela, não mais mensagem no celular — e sete avisos por dia é o caminho
-     * mais curto pra ele parar de ler todos, inclusive os que importam. A tela
-     * fica viva; o bot continua falando as mesmas três vezes.
-     *
-     * São ~7 chamadas de rede e 1 escrita cada. Ao lado da rodada das 8h, que
-     * baixa 16 MB de pools, isto é troco. */
-    /* AS RODADAS DAS POOLS QUE NÃO FALAM — 16h e 20h de Brasília.
-     *
-     * Medem o mercado inteiro (redes, protocolos, pools, ciclo) e vão embora
-     * sem mandar nada. São a metade nova do "de 4 em 4 horas": com elas e as
-     * das 08h e 12h, o chão e as classes se refazem quatro vezes por dia. */
-    if (hora === 19 || hora === 23) {
-      contexto.waitUntil(
-        rodada(env, { pools: true, semFalar: true }).catch(() => {
-          /* Rodada calada que falha continua calada: a leitura anterior segue
-             valendo com a data dela, e a próxima tenta em quatro horas. Acordar
-             alguém por causa disso seria transformar frescor em alarme. */
-        }),
-      );
-      return;
-    }
-
-    if (hora === 3 || hora === 7) {
-      contexto.waitUntil(
-        medirOCiclo(env, hojeEmBrasilia()).catch(() => {
-          /* Falhar aqui não merece acordar ninguém: a leitura anterior continua
-             valendo, com a data dela à mostra, e a próxima rodada tenta de
-             novo em quatro horas. */
-        }),
-      );
-      return;
-    }
-
+     * A medição é UMA POR DIA de cada coisa: o comentário longo dentro de
+     * `rodada` explica por quê, e a razão é boa — o que se mede aqui muda
+     * devagar, e o preço do Bitcoin, que muda rápido, já se atualiza sozinho na
+     * tela pelo navegador. */
     contexto.waitUntil(
       rodada(env, {
         soUrgente: hora === 15,          // meio-dia de Brasília: só o que é urgente
         medir: hora === 11,              // 8h de Brasília: a medição do dia
-        pools: hora === 15,              // meio-dia: refaz as pools, e ainda fala o urgente
         semanal: dia === 1 && hora === 2, // segunda de madrugada: o apanhado
       }).catch(async (erro) => {
         // Um radar que quebra calado é pior que radar nenhum: o Rayakuza acha que o
