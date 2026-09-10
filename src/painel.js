@@ -929,7 +929,7 @@ function cartaoDePool(p) {
    * sustentou. */
   const numeros = '<div class="numeros">' +
     celula("mult/dia", p.multiplicador == null ? "—" : p.multiplicador.toFixed(3) + "%",
-           p.metaCiclo?.soNoPapel ? "desce" : "sobe", true) +
+           p.cartazVsChao?.inflado ? "desce" : "sobe", true) +
     celula("chão", nu(p.chao), cor(p.chao)) +
     celula("cartaz", nu(p.cartaz)) +
     celula("incentivos", p.emitido == null ? "—" : p.emitido.toFixed(0) + "%",
@@ -937,10 +937,14 @@ function cartaoDePool(p) {
   '</div>';
 
   // O aviso que o método sozinho não daria.
-  const aviso = p.metaCiclo?.soNoPapel
-    ? '<div class="recado">⚠️ Pelo cartaz esta pool projeta a meta do método (' +
-      p.metaCiclo.aoMesAnunciado.toFixed(1) + '%/mês), mas pelo que ela de fato pagou dá ' +
-      p.metaCiclo.aoMesGarantido.toFixed(1) + '%/mês — abaixo dos ' + p.metaCiclo.meta + '% do ciclo.</div>'
+  /* O AVISO SEM RÉGUA EXTERNA. Antes ele comparava contra uma meta mensal que
+     eu não consigo provar de onde saiu; agora compara a pool com ela mesma —
+     o que ela anuncia contra o que ela pagou. Fato, não alvo. */
+  const aviso = p.cartazVsChao?.inflado
+    ? '<div class="recado">⚠️ O cartaz anuncia ' +
+      p.cartazVsChao.aoMesAnunciado.toFixed(1) + '%/mês, mas o que ela de fato pagou dá ' +
+      p.cartazVsChao.aoMesGarantido.toFixed(1) + '%/mês — ' +
+      p.cartazVsChao.quantasVezes.toFixed(1) + ' vezes menos.</div>'
     : "";
 
   // A trajetória: ontem, semana, mês — pra ver se está começando ou murchando.
@@ -1074,7 +1078,7 @@ function grupo(titulo, nota, itens, desenha, vazio, total = null) {
  * O BITCOIN — o eixo em que o resto se apoia.
  *
  * No método do Defiverso tudo aponta pro Bitcoin: é ele que define o ciclo, o
- * ciclo define a meta mensal, e a meta define quais pools passam na régua. O
+ * ciclo muda a divisão da carteira e o que se pode esperar de uma pool. O
  * radar já buscava o preço dele todo dia pra isso — só que a leitura virava
  * dois números e sumia.
  *
@@ -1376,6 +1380,27 @@ function graficoDoBtc(g, serieVelha, mediaHoje, precoVivo, cruz, largura, altura
  * nenhuma, porque dependiam da proxima rodada. Fazer a pessoa esperar horas
  * pra ver uma medida que custa um pedido de rede e transferir pra ela o preco
  * de uma escolha minha. */
+/* O MACRO, buscado pela tela.
+ *
+ * Mesma decisao do ciclo vivo, e pelo mesmo motivo: dado de mercado publico
+ * nao precisa esperar a rodada. A rota guarda seis horas na borda, entao cem
+ * aberturas do painel custam uma ida ao FRED. */
+var macroVivo = null;
+var macroBuscado = false;
+
+function pedirMacro() {
+  if (macroBuscado) return;
+  macroBuscado = true;
+  fetch("/api/macro?v=${VERSAO}").then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (d) {
+    /* GUARDA MESMO SEM DADO. So guardar quando veio numero fazia o bloco de
+       'o que faltou' nunca aparecer — a explicacao do erro dependia de nao ter
+       erro. Quem desenha e que decide o que fazer com uma resposta vazia. */
+    if (d) { macroVivo = d; desenhar(); }
+  }).catch(function () {});
+}
+
 var cicloVivo = null;
 var cicloBuscado = false;
 
@@ -1477,8 +1502,8 @@ async function buscarBitcoin() {
  *
  * Pedido dele em 09/09/2026: "pode deixar o preço do BTC em tempo real nessa
  * tela, ele é o centro de todo o mercado, merece destaque". E é o método dele
- * falando: o Bitcoin define o ciclo, o ciclo define a meta, a meta decide quais
- * pools passam na régua. Um número congelado no alto dessa cadeia envelhece
+ * falando: o Bitcoin define o ciclo, e o ciclo muda a divisão da carteira do
+ * B.A.R.C.A. — essa parte está no material, com os números.
  * tudo o que vem depois.
  *
  * TRÊS REGRAS, e cada uma existe por um motivo:
@@ -1637,19 +1662,21 @@ function blocoDoBitcoin() {
 
   /* DE QUANDO E CADA NUMERO. Sem esta linha o bloco inteiro parece ter a mesma
      idade, e metade dele nao tem. */
+  /* DE QUANDO E CADA NUMERO — em uma linha, e nao num paragrafo.
+     Aqui havia a explicacao inteira de qual parte se atualiza sozinha e qual
+     vem da rodada. Isso e desenho, e desenho e assunto do codigo. Fica a
+     variacao de 24h, que e mercado, e a data, que evita ler numero velho como
+     novo. */
   var carimbo = vivo
-    ? '<div class="puxa">O preço é de agora' +
+    ? '<div class="puxa">' +
       (btcVivo.variacao24h != null
-        ? " (" + (btcVivo.variacao24h >= 0 ? "+" : "") + btcVivo.variacao24h.toFixed(1) + "% em 24h)"
+        ? (btcVivo.variacao24h >= 0 ? "+" : "") + btcVivo.variacao24h.toFixed(1) + "% em 24h · "
         : "") +
-      '. Ele se atualiza sozinho a cada minuto enquanto esta tela estiver aberta. ' +
-      'A média de 200 dias, o gráfico e o regime são da leitura de ' +
-      esc(l.dia || "hoje") + ', que roda uma vez por dia.</div>'
-    : '<div class="puxa">Não consegui o preço de agora — estes números são da leitura de ' +
-      esc(l.dia || "hoje") + '.</div>';
+      'médias e gráfico de ' + esc(l.dia || "hoje") + '</div>'
+    : '<div class="puxa">preço de ' + esc(l.dia || "hoje") + '</div>';
 
   return grupo("₿ Bitcoin — o eixo do ciclo",
-    "No método, tudo aponta pra ele: o Bitcoin define o ciclo, o ciclo define a meta mensal, e a meta decide quais pools passam na régua.",
+    "",
     [1], function () {
       return '<div class="cartao btcCartao">' +
         celulas +
@@ -1683,9 +1710,8 @@ function blocoDoBitcoin() {
              estava vendo 24 horas lia que estava vendo 260 dias. A medida e a
              mesma de sempre (o pedaco que a leitura enxerga); so o nome dela
              estava errado. */
-          ? '<div class="puxa">A faixa acima cobre os últimos ' +
-            (pos ? pos.dias : serie.length) + ' dias, e neles o preço ' +
-            (variacao >= 0 ? "subiu " : "caiu ") + Math.abs(variacao).toFixed(0) + '%.</div>'
+          ? '<div class="puxa">' + (pos ? pos.dias : serie.length) + ' dias · ' +
+            (variacao >= 0 ? "+" : "−") + Math.abs(variacao).toFixed(0) + '%</div>'
           : "") +
         carimbo +
         '<div id="alertasBtc"></div>' +
@@ -2010,6 +2036,93 @@ function telaDeMudancas() {
  * limita 10 chamadas por hora e o Worker sai por IP compartilhado, então um
  * número pode ser de ontem. Número velho declarado velho é melhor que número
  * ausente — mas número velho apresentado como de hoje é pior que os dois. */
+/* O QUE O DINHEIRO DO MUNDO ESTA FAZENDO.
+ *
+ * Inflacao, juros, quanto dinheiro existe, e o tamanho do balanco do banco
+ * central americano. Sao os numeros que decidem se o dinheiro esta ficando
+ * mais caro ou mais barato — e o preco de todo ativo de risco anda com isso.
+ *
+ * VEM DEPOIS DOS INDICADORES DO BITCOIN, e a ordem e proposital: o radar
+ * existe pra situar no ciclo do Bitcoin, e o macro e o pano de fundo, nao o
+ * assunto. Quem abre quer saber onde esta antes de saber por que.
+ *
+ * A REGRA DE TAYLOR E UMA CONTA, NAO UMA PREVISAO. Ela diz em que altura os
+ * juros ficariam pela formula, dado o quanto a inflacao passou da meta. O
+ * banco central se afasta dela com frequencia — e e justamente a DISTANCIA
+ * entre a conta e o juro real que informa alguma coisa. */
+function blocoDoMacro() {
+  var m = macroVivo;
+  if (!m) { pedirMacro(); return ""; }
+
+  /* SEM DADO, SEM BLOCO — e o motivo NAO vai pra tela.
+     Havia aqui um aviso explicando que o FRED recusa pedidos da nuvem sem
+     credencial, com o endereco pra pedir a chave e o comando pra guardar. Isso
+     e tarefa de quem monta, nao informacao de quem observa. Quem monta ve em
+     /saude/macro; quem observa nao ve um bloco vazio pedindo desculpa. */
+  if (m.falhas && m.falhas.length && !m.inflacao && !m.m2) return "";
+
+  var linhas = [];
+  var por = function (x, forte) {
+    if (!x || !x.texto) return;
+    linhas.push('<div class="indLinha' + (forte ? " destaque" : "") + '">' +
+      '<span class="ponto">·</span><span>' + esc(x.texto) + '</span></div>');
+  };
+
+  por(m.inflacao, true);
+  por(m.postura, true);
+  por(m.taylor);
+  por(m.m2);
+  por(m.balanco);
+  if (!linhas.length) return "";
+
+  var resumo = "";
+  if (m.inflacao && m.postura) {
+    /* UMA FRASE QUE JUNTA AS DUAS PONTAS, sem dizer o que fazer com elas.
+       Inflacao acima da meta pede juro mais alto; juro abaixo do que a regra
+       aponta e o contrario disso. Quando as duas coisas acontecem juntas, isso
+       e a informacao — e some se cada linha for lida sozinha. */
+    resumo = m.inflacao.acimaDaMeta && m.postura.frouxa
+      ? "Inflação acima da meta e juro abaixo do que a regra aponta ao mesmo tempo."
+      : !m.inflacao.acimaDaMeta && m.postura.apertada
+      ? "Inflação abaixo da meta e juro acima do que a regra aponta ao mesmo tempo."
+      : "";
+  }
+
+  return '<div class="cicloCurso">' +
+    '<div class="cursoTopo"><b>O dinheiro do mundo</b>' +
+      (m.desemprego ? '<span class="cursoFase">desemprego ' +
+        esc(String(m.desemprego.valor).replace(".", ",")) + '%</span>' : "") +
+    '</div>' +
+    linhas.join("") +
+    (resumo ? '<div class="cursoRecado">' + esc(resumo) + '</div>' : "") +
+
+    /* O rodape explicativo saiu junto com os outros: de onde vem a serie e
+       como a conta e feita e documentacao, e documentacao mora no codigo. */
+  '</div>';
+}
+
+/* Este numero esta perto o bastante de um corte pra a fonte decidir a leitura?
+ *
+ * Os cortes sao os mesmos do indicadores.js. A margem de 4% e MINHA, e sai da
+ * medida: os dois caminhos de calculo divergiram no maximo 3,5% em 09/09/2026,
+ * entao 4% cobre a divergencia observada com uma folga pequena. */
+var CORTES_NA_TELA = {
+  mvrv: [1, 1.4, 1.5, 3.5],
+  zscore: [0.5, 3],
+  puell: [0.5, 3],
+  vdd: [0.5, 3],
+};
+
+function pertoDeUmCorte(chave, valor, margem) {
+  var cortes = CORTES_NA_TELA[chave];
+  if (!cortes || !(valor > 0)) return false;
+  var m = margem || 0.04;
+  for (var i = 0; i < cortes.length; i++) {
+    if (Math.abs(valor / cortes[i] - 1) <= m) return true;
+  }
+  return false;
+}
+
 function blocoDaReguaDoCurso(c) {
   var l = c && c.leitura;
   var cur = l && l.curso;
@@ -2063,8 +2176,22 @@ function blocoDaReguaDoCurso(c) {
         (d && d.deAntes && d.dia
           ? ' <i class="indVelho">(leitura de ' + esc(d.dia) + ')</i>'
           : "") +
-        (d && d.fonte === "coinmetrics"
-          ? ' <i class="indVelho">(fonte reserva)</i>'
+        /* A MARCA DA FONTE RESERVA SO APARECE QUANDO ELA PODE MUDAR A LEITURA.
+         *
+         * Antes ela vinha em toda linha, e ele reparou que isso polui sem
+         * informar. Ele tem razao no caso comum: os dois caminhos de calculo
+         * ficam a menos de 3,5% um do outro, e a 3,5% do MEIO de uma faixa a
+         * diferenca nao muda nada do que se le.
+         *
+         * Perto de um CORTE, muda tudo: um MVRV de 1,395 por um caminho e
+         * 1,405 pelo outro e "no meio" num e "acumulacao" no outro. Entao a
+         * marca aparece exatamente ai — quando o numero esta perto o bastante
+         * de um corte pra a escolha da fonte decidir a leitura.
+         *
+         * Aviso que aparece sempre vira moldura e some da vista; aviso que
+         * aparece raro e lido. */
+        (d && d.fonte === "coinmetrics" && pertoDeUmCorte(chave, d.valor)
+          ? ' <i class="indVelho">(pode virar pro outro lado: valor de fonte alternativa)</i>'
           : "") +
       '</span>' +
     '</div>';
@@ -2121,19 +2248,29 @@ function blocoDaReguaDoCurso(c) {
 
   return '<div class="cicloCurso">' +
     '<div class="cursoTopo">' +
-      '<b>A régua do curso</b>' +
+      '<b>Os indicadores do ciclo</b>' +
       (temCurso ? '<span class="cursoFase ' + f.cor + '">' + esc(f.txt) + '</span>' : "") +
     '</div>' +
-    (temCurso
-      ? '<div class="cursoFirmeza">' + esc(cur.firmeza) + '</div>'
-      : '<div class="cursoFirmeza">os quatro indicadores on-chain não chegaram hoje — ' +
-        'a fonte deles tem cota por hora. O que está abaixo sai do preço, e não depende dela.</div>') +
+    /* SEM OS INDICADORES ON-CHAIN, O BLOCO SO MOSTRA O QUE TEM.
+       Antes ele explicava a falha ("a fonte tem cota por hora"), e ele reparou:
+       "isso e coisa tecnica de quem ta criando, nao de quem quer observar o
+       mercado". Tem razao — por que a fonte recusou nao muda nada do que ele
+       ve nem do que ele decide. O estado tecnico mora em /saude, que existe
+       pra isso. */
+    (temCurso ? '<div class="cursoFirmeza">' + esc(cur.firmeza) + '</div>' : "") +
     linhas +
     linhaDaFaixa +
     linhaDaCruz +
-    (l.media50 && l.media50.texto
-      ? '<div class="indLinha"><span class="ponto">·</span><span>' + esc(l.media50.texto) + '</span></div>'
-      : "") +
+    /* A media de 50 seguia SO a leitura guardada, enquanto a faixa e a cruz ja
+       preferiam a viva. Duas linhas vizinhas com regras diferentes de qual
+       fonte vale: uma mostrava o texto novo e a outra o antigo, na mesma
+       lista. Ordem de preferencia tem que ser uma so pro bloco inteiro. */
+    (function () {
+      var m50 = (cicloVivo && cicloVivo.media50) || l.media50;
+      return m50 && m50.texto
+        ? '<div class="indLinha"><span class="ponto">·</span><span>' + esc(m50.texto) + '</span></div>'
+        : "";
+    })() +
     (l.altseason && l.altseason.texto
       ? '<div class="indLinha"><span class="ponto">·</span><span>' + esc(l.altseason.texto) + '</span></div>'
       : "") +
@@ -2148,23 +2285,6 @@ function blocoDaReguaDoCurso(c) {
         esc(l.confronto.recado) + '</div>'
       : "") +
     rima +
-    /* AS FALHAS, DITAS DE JEITO DIFERENTE conforme alguém as tenha coberto.
-       A lista crua ("mvrv: limite de chamadas da fonte · zscore: ...") logo
-       abaixo de três indicadores mostrados fazia a tela parecer quebrada
-       justamente quando ela tinha funcionado. A falha é real e continua dita —
-       muda o que ela SIGNIFICA pra quem lê. */
-    (veioDoSubstituto
-      ? '<div class="cursoNota">A fonte principal recusou hoje (ela limita por hora, ' +
-        'e o endereço de saída é compartilhado). Os três acima vieram da fonte reserva, ' +
-        'calculados de outro jeito — batem dentro de 3,5% e caem na mesma faixa. ' +
-        'O VDD não tem substituto e por isso não está aí.</div>'
-      : (ind.falhas && ind.falhas.length)
-      ? '<div class="cursoNota">' + esc(ind.falhas.join(" · ")) + '</div>'
-      : "") +
-    '<div class="cursoNota">Indicadores e cortes do Portal 2 — Teoria dos Ciclos. ' +
-      'Os números vêm de bitcoin-data.com. A faixa de bull market (20 semanas de ' +
-      'média simples + 21 de exponencial) e o cruzamento das médias de 50 e 200 ' +
-      'saem do preço do Bitcoin, e as definições são as que ele dá em vídeo.</div>' +
   '</div>';
 }
 
@@ -2190,8 +2310,6 @@ function desenharCiclo() {
     '<div class="ciclo c-' + esc(c.ciclo) + '">' +
       '<div class="cicloTopo">' +
         '<span class="cicloNome">' + esc(nome) + '</span>' +
-        '<span class="cicloMeta">meta do método: <b>' + c.metaMensal + '% ao mês</b>' +
-          (c.origem === "escolhido" ? " · definido por você" : "") + '</span>' +
       '</div>' +
       (eixos.length
         ? '<div class="cicloEixos">' +
@@ -2200,17 +2318,33 @@ function desenharCiclo() {
               ? '<div><span class="ponto">·</span><span>o preço está desse lado há <b>' + dias + ' dias</b></span></div>'
               : "") +
           '</div>'
-        : '<div class="cicloEixos">Ainda não medi os eixos — a leitura é feita na rodada das 8h.</div>') +
+        : "") +
       (c.discorda
         ? '<div class="cicloBriga">⚠️ Você fixou <b>' + esc(c.ciclo) + '</b>, mas o que eu meço hoje dá <b>' +
           esc(c.leitura.ciclo) + '</b>.</div>'
         : "") +
       blocoDaReguaDoCurso(c) +
+      blocoDoMacro() +
+      /* O RODAPE DO CICLO ENCOLHEU PRA O QUE MUDA ALGUMA COISA.
+       *
+       * Ele estava assim: "Medido, não decidido: quando os dois eixos
+       * discordam eu não invento um veredito — trato como bear, que é o lado
+       * conservador. /ciclo bull no Telegram sobrepõe."
+       *
+       * Ele leu e disse: "tudo informação irrelevante que polui o app". Tem
+       * razão, e o padrão é maior que essa frase — era EU EXPLICANDO O MEU
+       * PRÓPRIO RACIOCÍNIO na tela dele. Como eu chego no número é assunto do
+       * código; o que a tela deve é o número e a data dele.
+       *
+       * O que sobra: a DATA (um número de ontem apresentado como de hoje é a
+       * armadilha que este projeto inteiro existe pra desarmar) e, quando ele
+       * fixou o ciclo à mão, o lembrete de que fixou — senão ele esquece que
+       * a tela está obedecendo a ele em vez de medindo. */
       '<div class="cicloComo">' +
         (c.origem === "escolhido"
-          ? 'Quem manda é você. <code>/ciclo auto</code> no Telegram devolve pra medida.'
-          : 'Medido, não decidido: quando os dois eixos discordam eu não invento um veredito — uso a meta de bear, que é a conservadora. <code>/ciclo bull</code> no Telegram sobrepõe.') +
-        (c.medidoEm ? ' <span style="opacity:.7">Leitura de ' + esc(c.medidoEm) + '.</span>' : "") +
+          ? 'Ciclo fixado por você. <code>/ciclo auto</code> volta pra medida. '
+          : "") +
+        (c.medidoEm ? '<span style="opacity:.7">Leitura de ' + esc(c.medidoEm) + '.</span>' : "") +
       '</div>' +
     '</div>';
 }

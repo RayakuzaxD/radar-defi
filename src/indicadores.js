@@ -130,16 +130,16 @@ export function lerMvrv(v, c = CORTES.mvrv) {
   let zona, texto;
   if (v < c.fundo) {
     zona = "fundo";
-    texto = "MVRV em " + um(v) + " — abaixo de 1, a faixa que o curso chama de fundo";
+    texto = "MVRV em " + um(v) + " — abaixo de 1, a faixa de fundo";
   } else if (v >= c.acumulaBaixo && v <= c.acumulaAlto) {
     zona = "acumulacao";
-    texto = "MVRV em " + um(v) + " — dentro da faixa de acumulação do curso (1,4 a 1,5)";
+    texto = "MVRV em " + um(v) + " — dentro da faixa de acumulação (1,4 a 1,5)";
   } else if (v >= c.topo) {
     zona = "topo";
-    texto = "MVRV em " + um(v) + " — acima de 3,5, a faixa de topo do curso";
+    texto = "MVRV em " + um(v) + " — acima de 3,5, a faixa de topo";
   } else {
     zona = "meio";
-    texto = "MVRV em " + um(v) + " — entre as faixas que o curso marca";
+    texto = "MVRV em " + um(v) + " — entre as faixas marcadas";
   }
   return { nome: "MVRV", valor: v, zona, texto };
 }
@@ -150,9 +150,9 @@ export function lerZscore(v, c = CORTES.zscore) {
   return {
     nome: "MVRV Z-Score", valor: v, zona,
     texto: "Z-Score em " + um(v) + " — " + (
-      zona === "fundo" ? "abaixo de 0,5, onde o curso marca fundo"
-      : zona === "topo" ? "acima de 3, onde o curso marca topo"
-      : "entre 0,5 e 3, sem marca do curso"),
+      zona === "fundo" ? "abaixo de 0,5: faixa de fundo"
+      : zona === "topo" ? "acima de 3: faixa de topo"
+      : "entre 0,5 e 3, fora das pontas"),
   };
 }
 
@@ -164,7 +164,7 @@ export function lerPuell(v, c = CORTES.puell) {
     texto: "Puell em " + um(v) + " — " + (
       zona === "fundo" ? "abaixo de 0,5: o que os mineradores recebem está apertado, marca de fundo"
       : zona === "topo" ? "acima de 3: mineradores recebendo muito, marca de topo"
-      : "entre 0,5 e 3, sem marca do curso"),
+      : "entre 0,5 e 3, fora das pontas"),
   };
 }
 
@@ -174,9 +174,9 @@ export function lerVdd(v, c = CORTES.vdd) {
   return {
     nome: "VDD", valor: v, zona,
     texto: "VDD em " + um(v) + " — " + (
-      zona === "fundo" ? "abaixo de 0,5, onde o curso marca fundo"
-      : zona === "topo" ? "acima de 3, onde o curso marca topo"
-      : "entre 0,5 e 3, sem marca do curso"),
+      zona === "fundo" ? "abaixo de 0,5: faixa de fundo"
+      : zona === "topo" ? "acima de 3: faixa de topo"
+      : "entre 0,5 e 3, fora das pontas"),
   };
 }
 
@@ -198,7 +198,7 @@ export function lerMedia50(precos, n = CORTES.media.curso) {
     zona: hoje >= media ? "topo" : "fundo",   // "topo" = lado de bull, pra somar igual aos outros
     lado: hoje >= media ? "bull" : "bear",
     texto: "Bitcoin " + (dist >= 0 ? "acima" : "abaixo") + " da média de 50 dias (" +
-      um(Math.abs(dist), 1) + "%) — o curso lê isso como " +
+      um(Math.abs(dist), 1) + "%) — o lado de " +
       (hoje >= media ? "bull" : "bear"),
   };
 }
@@ -332,7 +332,7 @@ export function lerCruzamento(precos, corte = CORTES.cruz) {
       /* A ressalva e dele, e sem ela o sinal engana: o cruzamento vale pro
          medio prazo, e no curto costuma marcar o contrario. Dar o sinal sem a
          ressalva seria dar metade do que ele ensina. */
-      " - no curso, o cruzamento vale pro medio prazo; no curto ele costuma " +
+      " - o cruzamento vale pro medio prazo; no curto ele costuma " +
       (ouro ? "marcar um topo local, com acomodacao depois"
             : "marcar o fundo daquele momento, com repique depois"),
   };
@@ -528,16 +528,16 @@ export function juntarLeituras(doCurso, doRadar, media50, estrutura = null) {
 
   let recado;
   if (!doCurso || fase === "sem-dado") {
-    recado = "Os indicadores do curso não foram lidos hoje — vale só a medida do radar.";
+    recado = "Os indicadores on-chain não foram lidos hoje — vale só a medida de preço e capital.";
   } else if (concordam) {
-    recado = "As duas réguas concordam: a do curso e a do radar apontam pro mesmo lado.";
+    recado = "As duas medidas concordam: os indicadores on-chain e a de preço e capital apontam pro mesmo lado.";
   } else if (discordam) {
-    recado = "As duas réguas DISCORDAM. O curso lê " + fase +
-      " e o radar lê " + cicloRadar + ". Nenhuma das duas está escolhendo por você.";
+    recado = "As duas medidas DISCORDAM: os indicadores on-chain leem " + fase +
+      " e o preço com o capital lê " + cicloRadar + ". Nenhuma das duas está escolhendo por você.";
   } else {
-    recado = "Os indicadores do curso estão no meio do caminho — nem fundo nem topo." +
+    recado = "Os indicadores on-chain estão no meio do caminho — nem fundo nem topo." +
       (doCurso.acumulando
-        ? " O MVRV está na faixa que o curso chama de acumulação (1,4 a 1,5)."
+        ? " O MVRV está na faixa de acumulação (1,4 a 1,5)."
         : "");
   }
 
@@ -566,7 +566,7 @@ export function juntarLeituras(doCurso, doRadar, media50, estrutura = null) {
     if (rimam && lados.length === 3) {
       recadoDaFaixa += " · as três réguas apontam pro mesmo lado";
     } else if (faixa.lado !== "na-faixa" && sugerido && faixa.lado !== sugerido) {
-      recadoDaFaixa += " · e isso é o CONTRÁRIO do que os indicadores do curso marcam";
+      recadoDaFaixa += " · e isso é o CONTRÁRIO do que os indicadores on-chain marcam";
     }
   }
 

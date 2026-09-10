@@ -10,7 +10,7 @@
 import {
   GIRO, giro, lerGiro, perdaImpermanente, descolamentoQueZera,
   atividadeDeMercado, lerMultiplo, precoValor, receitaCobreIncentivo,
-  fichaDefiverso, porqueDefiverso, multiplicador, projetaMeta, META_MENSAL,
+  fichaDefiverso, porqueDefiverso, multiplicador, cartazContraChao, CARTAZ_INFLADO_MEU,
   faixaDeTaxa, lerFaixa,
   PORTOES, TOKENS, classificarToken, notaDoMetodo, passaNosPortoes,
 } from "./src/metodo.js";
@@ -103,29 +103,44 @@ titulo("O multiplicador do Genesis — Taxas 24h / TVL");
 }
 
 // ---------------------------------------------------------------------------
-titulo("A meta por ciclo — 4-5% ao mês em bear, 20%+ em bull");
+titulo("O cartaz contra o chão — a pool comparada com ela mesma");
 
 {
-  conferir("as metas do método estão fixadas",
-    META_MENSAL.bear === 4 && META_MENSAL.bull === 20);
+  /* ESTE BLOCO ERA SOBRE UMA META MENSAL, E A META FOI REMOVIDA.
+   *
+   * Havia aqui `META_MENSAL.bear === 4 && META_MENSAL.bull === 20`, citando um
+   * METODOLOGIA_GENESIS que, procurado em 10/09/2026, não existe: nem nos 44
+   * PDFs do curso, nem nas 84 transcrições do canal, nem no disco dele. Ele
+   * perguntou de onde tinha saído aquele "4% ao mês" na tela, e a resposta
+   * honesta foi "não sei". Mandou tirar.
+   *
+   * O teste antigo era exemplar no formato e vazio no conteúdo: travava um
+   * número contra ele mesmo. Um teste só vale o quanto vale a fonte do número
+   * que ele guarda — e este guardava um número sem fonte, com toda a
+   * aparência de rigor.
+   *
+   * O QUE FICOU não precisa de fonte externa nenhuma: o que a pool anuncia
+   * contra o que ela pagou. Fato medido nela mesma. */
+  const inflada = cartazContraChao(24, 300);
+  conferir("cartaz muito acima do chão é marcado", inflada.inflado === true,
+    inflada.quantasVezes.toFixed(1) + " vezes");
+  conferir("e ela diz quantas vezes", Math.abs(inflada.quantasVezes - 12.5) < 1e-9);
 
-  // 60% ao ano = 5% ao mês: projeta em bear, não projeta em bull.
-  const bear = projetaMeta(60, 60, "bear");
-  conferir("5% ao mês projeta a meta de bear", bear.projeta === true);
-  const bull = projetaMeta(60, 60, "bull");
-  conferir("e não projeta a de bull", bull.projeta === false);
+  const honesta = cartazContraChao(60, 66);
+  conferir("cartaz perto do chão não é marcado", honesta.inflado === false);
+  conferir("os dois em % ao mês", Math.abs(honesta.aoMesGarantido - 5) < 1e-9 &&
+    Math.abs(honesta.aoMesAnunciado - 5.5) < 1e-9);
 
-  /* O caso que o método sozinho não pega: o cartaz projeta a meta, o chão não.
-   * A pool passa na régua por um número que ela não sustenta. */
-  const soPapel = projetaMeta(24, 300, "bear");
-  conferir("cartaz que projeta e chão que não é marcado", soPapel.soNoPapel === true,
-    "é onde o radar acrescenta ao método em vez de só obedecer");
-  const honesta = projetaMeta(60, 66, "bear");
-  conferir("quando os dois projetam, não é 'só no papel'", honesta.soNoPapel === false);
+  /* Exatamente no corte não é "inflado por pouco": o corte é >=, e isso está
+     escrito no teste pra ninguém trocar por > sem perceber. */
+  const noCorte = cartazContraChao(10, 10 * CARTAZ_INFLADO_MEU);
+  conferir("exatamente no corte conta como inflado", noCorte.inflado === true);
 
-  conferir("sem chão não se afirma que projeta",
-    projetaMeta(null, 300, "bear").projeta === null,
-    "null é 'não sei'; false seria dizer que reprovou");
+  conferir("sem chão não se afirma nada",
+    cartazContraChao(null, 300).inflado === false,
+    "sem o que comparar, a resposta é 'não sei', e não sei não vira aviso");
+  conferir("chão zero não vira divisão por zero",
+    cartazContraChao(0, 300).quantasVezes === null);
 }
 
 // ---------------------------------------------------------------------------

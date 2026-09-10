@@ -157,29 +157,50 @@ export function multiplicador(apyBase) {
   return apyBase / 365;
 }
 
-/* A meta do método, por ciclo (METODOLOGIA_GENESIS, seção 2). */
-export const META_MENSAL = { bear: 4, bull: 20 };
-
-/* Esse multiplicador projeta a meta do ciclo?
+/* O CARTAZ CONTRA O CHÃO — o que a pool anuncia contra o que ela sustentou.
  *
- * O método manda comparar o rendimento projetado contra a meta e buscar outra
- * pool se não projetar. `chao` entra como a versão honesta da projeção: usar o
- * cartaz aqui seria projetar com o melhor caso, e o melhor caso não paga conta. */
-export function projetaMeta(chao, cartaz, ciclo = "bear") {
-  const meta = META_MENSAL[ciclo] ?? META_MENSAL.bear;
+ * ------------------------------------------------------------------------
+ * ISTO AQUI ERA UMA META MENSAL, E A META FOI REMOVIDA.
+ *
+ * Havia neste arquivo `META_MENSAL = { bear: 4, bull: 20 }`, citando
+ * "METODOLOGIA_GENESIS, seção 2" — e a tela estampava "meta do método: 4% ao
+ * mês". Em 10/09/2026 ele perguntou de onde tinha saído aquilo, porque não
+ * reconhecia.
+ *
+ * Fui procurar o documento: não está nos 44 PDFs do curso, não está nas 84
+ * transcrições do canal, não está no disco dele e nunca esteve no
+ * repositório. Procurei o NÚMERO também — "4% ao mês", "20% ao mês" — e não
+ * achei em nada. Ele decidiu: tira da tela.
+ *
+ * A LIÇÃO, e ela é sobre mim: uma citação com nome de documento e número de
+ * seção PARECE procedência. Aquela linha sobreviveu a semanas de leitura minha
+ * porque tinha cara de coisa conferida. Citação que não dá pra abrir não é
+ * fonte — é uma afirmação com roupa de fonte, e é pior que nenhuma, porque
+ * desliga a desconfiança.
+ *
+ * ------------------------------------------------------------------------
+ * O QUE FICOU, E POR QUE ELE NÃO PRECISA DE RÉGUA NENHUMA
+ *
+ * A parte útil daquilo nunca foi a meta: era o DESENCONTRO entre o que a pool
+ * anuncia e o que ela de fato pagou. Isso é fato sobre a pool, medido nela
+ * mesma, e não precisa de alvo externo pra significar alguma coisa.
+ *
+ * O CORTE DE DUAS VEZES É MEU, e está dito. Anunciar o dobro do que se
+ * sustentou é a diferença entre uma oscilação normal e um número que não se
+ * segura em pé. */
+export const CARTAZ_INFLADO_MEU = 2;
+
+export function cartazContraChao(chao, cartaz, vezes = CARTAZ_INFLADO_MEU) {
   const aoMes = (v) => (v == null ? null : v / 12);
-  const pelaGarantia = aoMes(chao);
-  const peloCartaz = aoMes(cartaz);
+  const doChao = aoMes(chao);
+  const doCartaz = aoMes(cartaz);
+  const inflado = doChao != null && doCartaz != null && doChao > 0 &&
+                  doCartaz >= doChao * vezes;
   return {
-    meta,
-    aoMesGarantido: pelaGarantia,
-    aoMesAnunciado: peloCartaz,
-    projeta: pelaGarantia != null ? pelaGarantia >= meta : null,
-    // Quando o cartaz projeta e o chão não, a pool passa na régua do método por
-    // um número que ela não sustenta — é exatamente onde o radar tem algo a
-    // acrescentar ao método.
-    soNoPapel: pelaGarantia != null && peloCartaz != null &&
-               peloCartaz >= meta && pelaGarantia < meta,
+    aoMesGarantido: doChao,
+    aoMesAnunciado: doCartaz,
+    quantasVezes: (doChao > 0 && doCartaz != null) ? doCartaz / doChao : null,
+    inflado,
   };
 }
 

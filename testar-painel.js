@@ -478,6 +478,60 @@ titulo("A base de entrada so pode ser congelada em dolar");
     semGuarda.join(" | ") + " — grava valor sem conferir a unidade");
 }
 
+/* ---------------------------------------------------------------------------
+ * NOME DO SERVIDOR USADO SEM SER DECLARADO NO NAVEGADOR
+ *
+ * painel.js importa VERSAO, OLHO_ABERTO e OLHO_FECHADO. Eles existem no
+ * MODULO — e nao existem dentro da string que vira a pagina. Ali so entra o
+ * que for interpolado, e a interpolacao some ao montar o texto.
+ *
+ * Em 10/09/2026 eu escrevi encodeURIComponent(VERSAO) DENTRO da string. Passa
+ * no node --check (e sintaxe valida), passa no analisador do script (e um
+ * identificador legitimo), e estoura no navegador com ReferenceError na
+ * primeira vez que a funcao roda. Cheguei a publicar.
+ *
+ * O comentario do OLHO_ABERTO neste mesmo arquivo conta que ja tinha
+ * acontecido antes, com outro nome. Duas vezes e padrao, nao azar.
+ *
+ * A PRIMEIRA VERSAO DESTE TESTE ACUSOU OS TRES, e os tres eram falso positivo:
+ * dois estavam dentro de COMENTARIOS (um deles o comentario que narra o bug) e
+ * o terceiro era `var OLHO_FECHADO = ...`, declarado de verdade no navegador.
+ * Um teste que grita em situacao normal e um teste que se aprende a ignorar —
+ * pior que teste nenhum.
+ *
+ * Entao a pergunta certa nao e "o nome aparece?", e sim "o nome e USADO sem
+ * ter sido DECLARADO?". Comentarios fora, declaracoes contam.
+ * ------------------------------------------------------------------------- */
+titulo("Nome do servidor usado sem ser declarado no navegador");
+{
+  const DO_SERVIDOR = ["VERSAO", "OLHO_ABERTO", "OLHO_FECHADO"];
+  const todoOScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]).join(SEPARADOR);
+
+  /* Fora os comentarios: o que esta neles nao roda, e narrar um erro nao pode
+     acusar o erro. */
+  const semComentarios = todoOScript
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+
+  for (const nome of DO_SERVIDOR) {
+    const usa = new RegExp("\\b" + nome + "\\b").test(semComentarios);
+    const declara = new RegExp("\\b(var|let|const)\\s+" + nome + "\\b").test(semComentarios);
+    conferir("o script nao usa " + nome + " sem declarar",
+      !usa || declara,
+      "ele so existe no modulo; dentro da string tem que ser interpolado ou declarado");
+  }
+
+  /* E a prova de que a rede pega o peixe: um nome de mentira, usado e nao
+     declarado, tem que ser acusado. Guarda que nunca foi testada contra o caso
+     ruim e guarda em que se confia por fe. */
+  const deMentira = "NOME_QUE_SO_EXISTE_NO_SERVIDOR";
+  const comOErro = semComentarios + SEPARADOR + "var x = " + deMentira + ";";
+  const pegou = new RegExp("\\b" + deMentira + "\\b").test(comOErro) &&
+    !new RegExp("\\b(var|let|const)\\s+" + deMentira + "\\b").test(comOErro);
+  conferir("e a conferencia pega um nome solto de mentira", pegou);
+}
+
 console.log(SEPARADOR + "-".repeat(60));
 console.log(falhou === 0 ? `TUDO VERDE — ${passou} conferências` : `${falhou} FALHARAM (de ${passou + falhou})`);
 process.exit(falhou === 0 ? 0 : 1);

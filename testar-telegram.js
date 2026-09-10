@@ -28,7 +28,6 @@ const doBanco = (escolhido, leitura) => {
   const e = cicloEfetivo(escolhido, leitura);
   return {
     ...e, escolhido, medidoEm: leitura?.dia || null,
-    metaMensal: cicloParaMeta(e.ciclo) === "bull" ? 20 : 4,
   };
 };
 
@@ -53,9 +52,13 @@ titulo("O texto do ciclo diz a meta, que é o número que muda a decisão");
 
 {
   const t = semTags(textoDoCiclo(doBanco("auto", LEITURA_HOJE)));
-  conferir("a meta aparece em número", t.includes("4% ao mês"),
-    "sem a meta, 'indefinido' é uma palavra que não muda nada do que ele faz");
-  conferir("diz que está usando a de bear e por quê", /meta de bear/.test(t));
+  /* ESTAS CONFERENCIAS EXIGIAM "4% ao mês" NO TEXTO, e a meta foi removida.
+     Ela citava um documento que não existe (veja metodo.js). O que continua
+     valendo é que "indefinido" não pode ficar sozinho: a mensagem tem que
+     dizer qual lado está sendo usado enquanto ele não decide. */
+  conferir("indefinido não fica sozinho: diz qual lado está valendo",
+    /tratando como bear/i.test(t),
+    "'indefinido' sem mais nada é uma palavra que não muda nada do que ele faz");
   conferir("os dois eixos aparecem", t.includes("Bitcoin 14.6%") && t.includes("stablecoin +1.5%"));
   conferir("a idade do regime aparece", t.includes("19 dias"),
     "regime de 19 dias e de 8 meses não valem o mesmo");
@@ -70,7 +73,7 @@ titulo("Escolha na mão: manda, mas não some com a medida");
 {
   const t = semTags(textoDoCiclo(doBanco("bull", LEITURA_HOJE), { acabouDeMudar: true }));
   conferir("diz que quem definiu foi ele", t.includes("definido por você"));
-  conferir("a meta acompanha a escolha", t.includes("20% ao mês"));
+  conferir("o texto acompanha a escolha", /bull/i.test(t));
   conferir("os eixos continuam na tela", t.includes("Bitcoin 14.6%"),
     "esconder a medida faria a escolha envelhecer sem ele perceber");
   conferir("e são apresentados como medida, não como motivo da escolha",
@@ -82,7 +85,7 @@ titulo("Escolha na mão: manda, mas não some com a medida");
 {
   const t = semTags(textoDoCiclo(doBanco("bull", LEITURA_BEAR)));
   conferir("quando a medida contraria a escolha, isso é dito", /Você fixou/.test(t));
-  conferir("e a escolha continua valendo", t.includes("20% ao mês"),
+  conferir("e a escolha continua valendo", /bull/i.test(t) && !/mudei|troquei/i.test(t),
     "o botão dele não pode virar sugestão");
   conferir("com o caminho de volta", t.includes("/ciclo auto"));
 }
@@ -99,7 +102,7 @@ titulo("Sem leitura ainda, não se inventa nenhuma");
 {
   const t = semTags(textoDoCiclo(doBanco("auto", null)));
   conferir("diz que ainda não mediu", /Ainda não medi/.test(t));
-  conferir("e ainda assim diz a meta que está valendo", t.includes("4% ao mês"));
+  conferir("e ainda assim diz qual lado está valendo", /bear/i.test(t), t.slice(0, 90));
   conferir("sem inventar eixo nenhum", !t.includes("Bitcoin"));
 }
 

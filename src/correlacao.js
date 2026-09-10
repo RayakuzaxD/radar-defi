@@ -1,12 +1,20 @@
 /* Correlação entre os dois tokens de um par — e a perda que ela implica.
  *
- * O método exige isto e não dá o número:
+ * A regra exige isto e não dá o número. E aqui a fonte É verificável — a
+ * citação antiga apontava pra um documento que não existe (o mesmo
+ * METODOLOGIA_GENESIS que sumiu do resto do projeto), mas em 10/09/2026 achei
+ * a mesma regra em DOIS materiais que estão no disco dele:
  *
- *   "Quando montar pool com dois ativos voláteis: verificar correlação no
- *    DeFiLlama. Os ativos precisam ter alta correlação positiva — se um sobe, o
- *    outro também sobe. Alta correlação = menos Impermanent Loss porque os
- *    preços se movem juntos."
- *                        — METODOLOGIA_GENESIS, seção 4
+ *   "O IL nasce da diferença de movimento entre os dois ativos. Se eles andam
+ *    colados, quase não existe IL."
+ *                        — relatório Impermanent Loss, página 3
+ *
+ *   "ESCOLHER 2 ATIVOS QUE TEM VOLATILIDADE PARECIDA. Ambos podem subir junto
+ *    em preço e o seu IL será menor."
+ *                        — Portal 5 (Dormiu, Acordou, Coletou), página 56
+ *
+ * Nenhum dos dois dá um corte numérico, então o corte continua sendo meu e
+ * continua marcado como meu.
  *
  * A regra aparece em três fontes independentes do curso, sempre sem
  * coeficiente, sem janela e sem método. Os cortes abaixo são MEUS, escolhidos a

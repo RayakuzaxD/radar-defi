@@ -42,7 +42,7 @@ import { dividirRedes, dividirPools, porqueDaRede, oQueMudou } from "./divisoes.
 import { separarPar, riscoDoPar } from "./rendimento.js";
 import {
   giro, lerGiro, faixaDeTaxa, lerFaixa, fichaDefiverso, porqueDefiverso,
-  multiplicador, projetaMeta,
+  multiplicador, cartazContraChao,
   passaNosPortoes, PORTOES, classificarToken,
 } from "./metodo.js";
 import {
@@ -62,6 +62,7 @@ import { cotacaoDoDolar } from "./cambio.js";
 import { referenciaDoCiclo, quantosAtivos } from "./barca.js";
 import { cotarSimbolos, cotarMints, lerMovimento } from "./precos.js";
 import { completarIndicadores } from "./coinmetrics.js";
+import { olharMacro } from "./macro.js";
 import {
   entenderTermo, procurarPiscinas, deOndeVemORendimento,
 } from "./piscina-busca.js";
@@ -191,7 +192,7 @@ async function lerAjuste(env, nome) {
 }
 
 /* ---------------------------------------------------------------------------
- * O CICLO — bull ou bear, que é o que decide a meta do método.
+ * O CICLO — bull ou bear, que muda a divisão da carteira no B.A.R.C.A.
  *
  * Duas peças separadas de propósito:
  *
@@ -408,7 +409,6 @@ async function cicloDoBanco(env) {
     // "agora" é a mesma armadilha do APY anunciado — um número velho com cara
     // de número de hoje.
     medidoEm: leitura?.dia || null,
-    metaMensal: cicloParaMeta(efetivo.ciclo) === "bull" ? 20 : 4,
   };
 }
 
@@ -886,14 +886,8 @@ async function montarRadar(env) {
      * apaga exatamente a distinção que o método (e a classe 'alugada') existem
      * pra fazer. */
     multiplicador: multiplicador(m.apy_base),
-    /* `metaCiclo` e não `meta` pelo mesmo motivo do `parVeredito` logo acima:
-     * `meta: m.meta` (a faixa de taxa da pool) já estava neste objeto, e a
-     * chave repetida apagava uma das duas em silêncio.
-     *
-     * O ciclo entra aqui, vindo de fora: era `projetaMeta(chao, cartaz)` sem
-     * terceiro argumento, o que fixava bear e comparava toda pool contra 4% ao
-     * mês mesmo em bull. */
-    metaCiclo: projetaMeta(m.chao, m.cartaz, cicloParaMeta(ciclo.ciclo)),
+    /* O cartaz contra o chão: quanto ela anuncia sobre quanto pagou. */
+    cartazVsChao: cartazContraChao(m.chao, m.cartaz),
     ficha: m.ficha ? JSON.parse(m.ficha) : [],
   })));
 
@@ -3169,6 +3163,61 @@ export default {
      * A rodada CONTINUA guardando tudo isso — o Telegram e o /saude leem de la,
      * e a leitura guardada e a que tem data. Esta rota nao substitui aquela:
      * ela tira a TELA da fila de espera. */
+    /* O MACRO: inflacao, juros, a regra de Taylor, M2 e o balanco do FED.
+     *
+     * SEIS HORAS DE CACHE, e o numero nao e chute: o CPI e o PCE saem UMA VEZ
+     * POR MES, o M2 idem, o balanco do FED e semanal. So o juro diario muda
+     * mais rapido, e ele anda de 0,25 em 0,25 algumas vezes por ano. Guardar
+     * menos que isso seria pagar rede pra receber o mesmo numero.
+     *
+     * Oito series do FRED, ~30 KB no total, sem chave nenhuma. */
+    /* SONDA: quem responde de DENTRO da nuvem?
+     *
+     * O fredgraph.csv responde 200 do computador dele e 520 do Worker. 520 e
+     * o codigo de "a origem devolveu coisa que eu nao entendo" — na pratica,
+     * bloqueio pelo endereco de saida. Mesma familia do bitcoin-data.com.
+     *
+     * Esta rota nao adivinha: ela PERGUNTA a cada host e diz o que voltou.
+     * Sem isso eu ficaria trocando cabecalho no escuro. */
+    if (url.pathname === "/saude/macro") {
+      const alvos = {
+        blsCpi: ["https://api.bls.gov/publicAPI/v1/timeseries/data/", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ seriesid: ["CUUR0000SA0"], startyear: "2026", endyear: "2026" }),
+        }],
+        blsDesemprego: ["https://api.bls.gov/publicAPI/v1/timeseries/data/", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ seriesid: ["LNS14000000"], startyear: "2026", endyear: "2026" }),
+        }],
+        nyFedJuros: ["https://markets.newyorkfed.org/api/rates/unsecured/effr/last/1.json", {}],
+        fredCsv: ["https://fred.stlouisfed.org/graph/fredgraph.csv?id=M2SL&cosd=2026-06-01", {}],
+        dbnomics: ["https://api.db.nomics.world/v22/series/FRED/M2SL/M2SL?observations=true", {}],
+      };
+      const fora = {};
+      for (const [nome, alvo] of Object.entries(alvos)) {
+        try {
+          const r = await fetch(alvo[0], alvo[1]);
+          const t = (await r.text()).slice(0, 110);
+          fora[nome] = { status: r.status, comeco: t.replace(/\s+/g, " ") };
+        } catch (e) {
+          fora[nome] = { erro: String(e?.message || e).slice(0, 90) };
+        }
+      }
+      return Response.json(fora, { headers: { "cache-control": "no-store" } });
+    }
+
+    if (url.pathname === "/api/macro") {
+      try {
+        const m = await olharMacro(null, env.FRED_API_KEY || null);
+        return Response.json(m, { headers: { "cache-control": "public, max-age=21600" } });
+      } catch (e) {
+        return Response.json({ erro: String(e?.message || e).slice(0, 140), falhas: [] },
+                             { headers: { "cache-control": "no-store" } });
+      }
+    }
+
     if (url.pathname === "/api/btc-ciclo") {
       try {
         const precos = await precoDoBitcoin();

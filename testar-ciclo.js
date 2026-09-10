@@ -218,8 +218,12 @@ titulo("A escolha do Rayakuza manda — o botão não pode ser decorativo");
   const leitura = lerCiclo(preco("bull"), capital("parado")); // indefinido
   const auto = cicloEfetivo("auto", leitura);
   conferir("em 'auto' vale a medida", auto.ciclo === "indefinido" && auto.origem === "medido");
-  conferir("e o texto avisa que a meta de bear está valendo",
-    auto.texto.includes("meta de bear"));
+  /* Era "a meta de bear está valendo" — a meta saiu do radar (veja metodo.js:
+     ela citava um documento que nao existe). O que continua importando e que
+     'indefinido' nao fique sozinho: o texto tem que dizer qual lado esta sendo
+     usado enquanto ele nao decide. */
+  conferir("e o texto avisa qual lado está valendo enquanto ele não decide",
+    /tratando como bear/i.test(auto.texto), auto.texto.slice(0, 90));
 
   const dele = cicloEfetivo("bull", leitura);
   conferir("'bull' escolhido sobrepõe a medida", dele.ciclo === "bull" && dele.origem === "escolhido");

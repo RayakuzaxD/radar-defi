@@ -399,7 +399,6 @@ export function textoDoCiclo(c, { acabouDeMudar = false } = {}) {
   const linhas = [];
 
   linhas.push(`${emoji} <b>${c.texto}</b>`);
-  linhas.push(`Meta do método: <b>${c.metaMensal}% ao mês</b>.`);
 
   const eixos = c.leitura?.porque || [];
   if (eixos.length) {

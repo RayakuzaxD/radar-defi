@@ -1,9 +1,17 @@
 /* Em que ciclo o mercado está — e o quanto disso é medida, não palpite.
  *
- * Esta é a última peça do método que faltava, e é a que governa mais coisa:
+ * Esta é a última peça do método que faltava, e é a que governa mais coisa.
  *
- *   "Meta de rendimento: 4-5% ao mês em bear market, 20%+ ao mês em bull."
- *                                      — METODOLOGIA_GENESIS, seção 2
+ * AQUI HAVIA UMA CITAÇÃO QUE EU NÃO CONSIGO ABRIR: "Meta de rendimento: 4-5%
+ * ao mês em bear market, 20%+ ao mês em bull", atribuída a um
+ * METODOLOGIA_GENESIS que não existe em lugar nenhum — nem nos 44 PDFs, nem
+ * nas 84 transcrições, nem no disco dele. Ele perguntou de onde tinha saído,
+ * eu procurei, não achei, e ele mandou tirar. A meta saiu do radar inteiro.
+ *
+ * O ciclo continua importando, e por outro motivo: ele muda a divisão da
+ * carteira no B.A.R.C.A. (essa sim está no material, com os números) e muda o
+ * que é razoável esperar de uma pool. O que ele NÃO faz mais é comparar
+ * rendimento contra um alvo que ninguém sabe de onde veio.
  *
  * O curso trata o ciclo como algo que o aluno JÁ SABE. Ele nunca diz como
  * determinar. Então este arquivo não inventa a regra do curso: ele mede duas
@@ -362,7 +370,7 @@ export function cicloEfetivo(escolhido, leitura) {
     leitura,
     discorda: false,
     texto: c === "indefinido"
-      ? `Ciclo indefinido — ${leitura?.firmeza || "sem leitura"}. Usando a meta de bear até você definir.`
+      ? `Ciclo indefinido — ${leitura?.firmeza || "sem leitura"}. Tratando como bear até você definir, que é o lado conservador.`
       : `Ciclo: ${c} — ${leitura?.firmeza}.`,
   };
 }
