@@ -436,6 +436,7 @@ export function paginaDoPainel() {
   .cursoFase { font-weight: 700; text-transform: lowercase; }
   .cursoFirmeza { color: var(--fraco); font-size: 12px; margin: 3px 0 7px; }
   .indLinha { display: flex; gap: 6px; font-size: 12px; line-height: 1.5; margin-bottom: 2px; }
+  .indLinha.destaque { font-weight: 600; }
   .indVelho { color: var(--alerta); font-style: normal; font-size: 11px; }
   .cursoRecado { margin-top: 8px; font-size: 12px; }
   .cursoRecado.briga { color: var(--alerta); font-weight: 650; }
@@ -1631,6 +1632,50 @@ function blocoDaReguaDoCurso(c) {
 
   var f = faixa[cur.fase] || faixa.meio;
 
+  /* A FAIXA DE BULL MARKET E A CRUZ, as duas linhas que faltavam.
+   *
+   * Vêm ANTES da média de 50 na tela, e a ordem é a importância: a faixa é
+   * semanal (vinte semanas são cinco meses), a média de 50 é diária. Linha
+   * lenta em cima, linha rápida embaixo — quem lê de cima pra baixo lê da
+   * estrutura pro detalhe.
+   *
+   * Elas saem de l e não de l.confronto: o confronto mora dentro do try da
+   * régua do curso e vem null quando a fonte dos indicadores cai. A faixa não
+   * depende daquela fonte — sai do preço do Bitcoin. Pendurá-la no confronto
+   * faria uma medida que funciona sumir junto com uma fonte que às vezes não
+   * responde. */
+  var mil = function (v) {
+    return "US$ " + Math.round(Number(v) || 0).toLocaleString("pt-BR");
+  };
+
+  var bmsb = l.faixaDeBull || (l.confronto && l.confronto.faixaDeBull);
+  var cruz = l.cruzamento || (l.confronto && l.confronto.cruzamento);
+
+  var linhaDaFaixa = bmsb
+    ? '<div class="indLinha destaque">' +
+        '<span class="ponto">·</span>' +
+        '<span>' + esc(bmsb.texto) +
+          ' <i class="indVelho">(' + esc(mil(bmsb.fundo)) + " a " + esc(mil(bmsb.topo)) +
+          ", Bitcoin em " + esc(mil(bmsb.hoje)) + ')</i></span>' +
+      '</div>'
+    : "";
+
+  var linhaDaCruz = cruz
+    ? '<div class="indLinha">' +
+        '<span class="ponto">·</span>' +
+        '<span>' + esc(cruz.texto) + '</span>' +
+      '</div>'
+    : "";
+
+  /* Quando as três réguas rimam (ou brigam), isso é a informação — e ela vale
+     mais que qualquer uma das três sozinha. */
+  var rima = (l.confronto && l.confronto.recadoDaFaixa &&
+              l.confronto.recadoDaFaixa !== (bmsb && bmsb.texto))
+    ? '<div class="cursoRecado' +
+      (/CONTRÁRIO/.test(l.confronto.recadoDaFaixa) ? " briga" : "") + '">' +
+      esc(l.confronto.recadoDaFaixa.split(" · ").slice(1).join(" · ")) + '</div>'
+    : "";
+
   return '<div class="cicloCurso">' +
     '<div class="cursoTopo">' +
       '<b>A régua do curso</b>' +
@@ -1638,6 +1683,8 @@ function blocoDaReguaDoCurso(c) {
     '</div>' +
     '<div class="cursoFirmeza">' + esc(cur.firmeza) + '</div>' +
     linhas +
+    linhaDaFaixa +
+    linhaDaCruz +
     (l.media50 && l.media50.texto
       ? '<div class="indLinha"><span class="ponto">·</span><span>' + esc(l.media50.texto) + '</span></div>'
       : "") +
@@ -1648,11 +1695,14 @@ function blocoDaReguaDoCurso(c) {
       ? '<div class="cursoRecado' + (l.confronto.discordam ? " briga" : "") + '">' +
         esc(l.confronto.recado) + '</div>'
       : "") +
+    rima +
     ((ind.falhas && ind.falhas.length)
       ? '<div class="cursoNota">' + esc(ind.falhas.join(" · ")) + '</div>'
       : "") +
     '<div class="cursoNota">Indicadores e cortes do Portal 2 — Teoria dos Ciclos. ' +
-      'Os números vêm de bitcoin-data.com.</div>' +
+      'Os números vêm de bitcoin-data.com. A faixa de bull market (20 semanas de ' +
+      'média simples + 21 de exponencial) e o cruzamento das médias de 50 e 200 ' +
+      'saem do preço do Bitcoin, e as definições são as que ele dá em vídeo.</div>' +
   '</div>';
 }
 

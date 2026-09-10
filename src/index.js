@@ -78,6 +78,7 @@ import {
 import { olharPosicao, avisoDeCegueira } from "./vigia-posicao.js";
 import {
   lerMvrv, lerZscore, lerPuell, lerVdd, lerMedia50, lerAltseason,
+  lerFaixaDeBull, lerCruzamento,
   vereditoDoCurso, juntarLeituras,
 } from "./indicadores.js";
 import {
@@ -239,7 +240,10 @@ async function medirOCiclo(env, dia) {
       const razao = await razaoEthBtc().catch(() => null);
       altseason = razao ? lerAltseason(razao.hoje, razao.antes) : null;
 
-      confronto = juntarLeituras(doCurso, leitura, lerMedia50(precos));
+      confronto = juntarLeituras(doCurso, leitura, lerMedia50(precos), {
+        faixaDeBull: lerFaixaDeBull(precos),
+        cruzamento: lerCruzamento(precos),
+      });
     } catch (e) {
       indicadores = { falhas: ["a régua do curso não foi lida: " + String(e?.message || e).slice(0, 80)] };
     }
@@ -274,6 +278,16 @@ async function medirOCiclo(env, dia) {
       confronto,
       altseason,
       media50: lerMedia50(precos),
+      /* A FAIXA DE BULL MARKET e a CRUZ, guardadas fora do confronto também.
+       *
+       * Fora porque o confronto pode não existir: ele mora dentro do try da
+       * régua do curso, e se a fonte dos indicadores estiver fora, ele vem
+       * null e levaria a faixa junto. Mas a faixa não depende daquela fonte —
+       * ela sai do preço do Bitcoin, que já está aqui na mão. Deixá-la
+       * pendurada no confronto seria acoplar uma medida que funciona a uma
+       * fonte que às vezes cai. */
+      faixaDeBull: lerFaixaDeBull(precos),
+      cruzamento: lerCruzamento(precos),
     }));
     return leitura;
   } catch (erro) {
@@ -2960,6 +2974,63 @@ export default {
         resposta.erro = String(e?.message || e).slice(0, 200);
       }
       return Response.json(resposta, { headers: { "cache-control": "no-store" } });
+    }
+
+    /* A RÉGUA DE PREÇO ESTÁ DE PÉ? Mede agora, e NÃO GRAVA.
+     *
+     * Esta rota nasceu da receita 6.6 deste projeto: código que só roda dentro
+     * do cron precisa de uma porta que o exercite de fora. A faixa de bull
+     * market e o cruzamento das médias só rodavam às 8h, 12h e 18h — e um erro
+     * neles ficaria escondido até a próxima rodada, que é o pior lugar pra um
+     * erro ficar.
+     *
+     * DUAS COISAS ELA NÃO FAZ, e as duas por escolha:
+     *
+     * 1. NÃO GRAVA. Se gravasse, a leitura da tela passaria a depender de quem
+     *    abre uma URL, e não do relógio. A tela continua mostrando a medida da
+     *    rodada, com a data dela — que é o combinado.
+     *
+     * 2. NÃO TOCA A FONTE DOS INDICADORES. bitcoin-data.com dá 10 chamadas por
+     *    hora POR IP, e todas as rodadas saem do mesmo IP da Cloudflare. Uma
+     *    rota pública que gastasse desse balde derrubaria a régua do curso na
+     *    rodada seguinte — a conferência quebrando justamente o que ela
+     *    confere. Aqui só entra o preço do Bitcoin, que é um pedido barato e
+     *    sem cota.
+     *
+     * Nada aqui é dele: preço de Bitcoin é dado público de mercado. */
+    if (url.pathname === "/saude/ciclo") {
+      try {
+        const precos = await precoDoBitcoin();
+        const faixa = lerFaixaDeBull(precos);
+        const cruz = lerCruzamento(precos);
+        const m50 = lerMedia50(precos);
+        return Response.json({
+          pontos: precos.length,
+          semanas: Math.floor(precos.length / 7),
+          faixaDeBull: faixa && {
+            sma20semanas: Math.round(faixa.sma),
+            ema21semanas: Math.round(faixa.ema),
+            piso: Math.round(faixa.fundo),
+            teto: Math.round(faixa.topo),
+            bitcoin: Math.round(faixa.hoje),
+            lado: faixa.lado,
+            texto: faixa.texto,
+          },
+          cruzamento: cruz && {
+            tipo: cruz.tipo,
+            media50: Math.round(cruz.rapida),
+            media200: Math.round(cruz.lenta),
+            virouHaDias: cruz.quandoDias,
+            diasVisiveis: cruz.diasVisiveis,
+            texto: cruz.texto,
+          },
+          media50: m50 && { valor: Math.round(m50.valor), lado: m50.lado, texto: m50.texto },
+          aviso: "esta rota MEDE e NÃO GRAVA — a tela mostra a medida da rodada, com a data dela",
+        }, { headers: { "cache-control": "no-store" } });
+      } catch (e) {
+        return Response.json({ erro: String(e?.message || e).slice(0, 200) },
+                             { headers: { "cache-control": "no-store" } });
+      }
     }
 
     if (url.pathname === "/saude/vigia") {

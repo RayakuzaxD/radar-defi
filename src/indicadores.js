@@ -66,6 +66,50 @@ export const CORTES = {
    * curso. As duas ficam: a de 50 é a do curso e vira mais rápido; a de 200 é o
    * eixo lento que impede repique de virar "bull". */
   media: { curso: 50, lenta: 200 },
+
+  /* "A FAIXA DE BULL MARKET" - Bull Market Support Band.
+   *
+   * ESTE CORTE NAO SAIU DE SLIDE: saiu da boca dele, no video de 20/05/2026,
+   * e esta transcrito palavra por palavra em Transcricoes-YouTube:
+   *
+   *     "a faixa de Bull Market... e uma uniao de duas medias. Se voce coloca
+   *      aqui indicadores... Bull Market Support Band... essa uniao dessas duas
+   *      faixas aqui de 20 semanas e 21 semanas, uma media movel exponencial e
+   *      uma media movel simples"
+   *
+   * E o gatilho, no mesmo video:
+   *
+   *     "quando a gente caiu para baixo dela, e justamente a sinalizacao de um
+   *      bear market comecando, como foi nos ciclos passados"
+   *
+   * POR QUE ELA IMPORTA MAIS QUE O RESTO. Contei os conceitos em 84 videos do
+   * canal dele: a faixa aparece 183 vezes, em 41 deles. O MVRV aparece 5 vezes,
+   * em 3. O radar tinha o MVRV e nao tinha a faixa - media o que eu conhecia,
+   * nao o que ele usa.
+   *
+   * EM SEMANAS, e isso e a diferenca dela. A media de 50 DIAS vira rapido e por
+   * isso nao entra no veredito. Vinte semanas sao cinco meses: esta faixa e a
+   * linha lenta, a que ele chama de estrutura. */
+  faixaDeBull: { sma: 20, ema: 21 },
+
+  /* "CRUZ DE OURO" e "CRUZ DA MORTE" - o cruzamento das medias de 50 e 200 dias.
+   *
+   * Dele, no video de 09/09/2026:
+   *
+   *     "A cruz da morte e quando nos temos a media de 50 rompendo a media de
+   *      200 de cima para baixo. A cruz de ouro e o inverso, quando nos temos a
+   *      media de 50 cruzando a media de 200 de baixo para cima."
+   *
+   * E a parte que quase todo mundo erra, tambem dele:
+   *
+   *     "no curto prazo, ele e inverso; no medio longo prazo ele e mais
+   *      correlacionado (...) a cruz da morte, ela acaba marcando o fundo
+   *      daquele momento (...) a cruz de ouro, marcando um topo local, e ai vem
+   *      uma quedinha depois"
+   *
+   * O radar JA TINHA as duas medias - e nunca as cruzou. Tinha as pecas do
+   * sinal e nao o sinal. */
+  cruz: { rapida: 50, lenta: 200 },
 };
 
 /* Onde um número cai, entre fundo e topo. Devolve "fundo", "topo", "acumulacao"
@@ -159,6 +203,141 @@ export function lerMedia50(precos, n = CORTES.media.curso) {
   };
 }
 
+/* A serie diaria fechada em SEMANAS, contando de tras pra frente.
+ *
+ * De tras pra frente porque a semana que importa e a de hoje: o ultimo ponto
+ * tem que ser o preco de agora, nao o de um pedaco de semana que sobrou no
+ * comeco da serie. Contar do inicio deixaria a ultima "semana" incompleta e
+ * variando de tamanho conforme o dia em que a rodada acontece. */
+function emSemanas(precos) {
+  const s = (precos || []).filter((x) => Number.isFinite(x) && x > 0);
+  const semanas = [];
+  for (let i = s.length - 1; i >= 0; i -= 7) semanas.push(s[i]);
+  return semanas.reverse();
+}
+
+/* A FAIXA DE BULL MARKET - SMA de 20 semanas + EMA de 21 semanas.
+ *
+ * A faixa e o espaco ENTRE as duas medias, e e por isso que ela e faixa e nao
+ * linha: as duas quase se tocam, e o que fica entre elas e uma zona de disputa,
+ * nao um ponto de virada. Estar dentro dela nao e estar de um lado nem do
+ * outro - e o que o radar chama de "na faixa", e dizer isso e mais honesto do
+ * que forcar um lado por meio decimo de diferenca.
+ *
+ * A EMA E SEMEADA COM A MEDIA DAS 21 PRIMEIRAS SEMANAS, e nao com a primeira.
+ * Semear com um ponto so faz esse ponto pesar 22% depois de 16 semanas - e o
+ * indicador do dia carregaria, calado, o preco de um dia qualquer de um ano
+ * atras.
+ *
+ * QUANTO A SEMENTE AINDA PESA, MEDIDO e nao estimado (10/09/2026, 400 dias de
+ * preco real de Bitcoin): cortar 5 semanas do comeco mexe 0,02% na EMA de
+ * hoje. Um pico artificial no primeiro ponto entra linear - 2x move 0,14%,
+ * 3x move 0,28%, 100x move 13,9%. Ou seja: a semente absorve OSCILACAO DE
+ * PRECO e nao absorve LIXO. Cem vezes nao e mercado, e dado corrompido, e
+ * nenhum alisamento devia fingir que conserta isso - isso e trabalho da
+ * fonte, nao do indicador. */
+export function lerFaixaDeBull(precos, corte = CORTES.faixaDeBull) {
+  const sem = emSemanas(precos);
+  if (sem.length < corte.ema + 4) return null;
+
+  const sma = sem.slice(-corte.sma).reduce((a, b) => a + b, 0) / corte.sma;
+
+  const alfa = 2 / (corte.ema + 1);
+  let ema = sem.slice(0, corte.ema).reduce((a, b) => a + b, 0) / corte.ema;
+  for (let i = corte.ema; i < sem.length; i++) ema = sem[i] * alfa + ema * (1 - alfa);
+
+  if (!(sma > 0) || !(ema > 0)) return null;
+
+  const diarios = (precos || []).filter((x) => Number.isFinite(x) && x > 0);
+  const hoje = diarios[diarios.length - 1];
+  const fundo = Math.min(sma, ema);
+  const topo = Math.max(sma, ema);
+
+  const acima = hoje > topo;
+  const abaixo = hoje < fundo;
+  const dist = acima ? ((hoje / topo) - 1) * 100
+             : abaixo ? ((hoje / fundo) - 1) * 100
+             : 0;
+
+  return {
+    nome: "Faixa de Bull Market",
+    sma, ema, fundo, topo, hoje, semanas: sem.length,
+    /* "topo" = lado de bull, pra somar igual aos outros indicadores. Dentro da
+       faixa e "meio", que e o que ela de fato diz. */
+    zona: acima ? "topo" : abaixo ? "fundo" : "meio",
+    lado: acima ? "bull" : abaixo ? "bear" : "na-faixa",
+    texto: acima
+      ? "Bitcoin ACIMA da faixa de bull market (" + um(dist, 1) + "% acima do teto dela) - " +
+        "nos ciclos de alta ela funciona como suporte"
+      : abaixo
+      ? "Bitcoin ABAIXO da faixa de bull market (" + um(Math.abs(dist), 1) + "% abaixo do piso) - " +
+        "e o que ele chama de sinalizacao de bear market"
+      : "Bitcoin DENTRO da faixa de bull market, entre as duas medias - " +
+        "a zona de disputa, sem lado definido",
+  };
+}
+
+/* A CRUZ DE OURO E A CRUZ DA MORTE.
+ *
+ * Devolve o estado de hoje (qual media esta por cima) e, quando da pra ver, ha
+ * quantos dias foi o ultimo cruzamento.
+ *
+ * O ALCANCE E LIMITADO E A FUNCAO DIZ ISSO. Com 400 dias de preco da pra
+ * calcular a media de 200 em 201 dias - entao um cruzamento mais velho que isso
+ * e invisivel daqui. `quandoDias` vem null nesse caso, e o texto fala "ha mais
+ * de N dias" em vez de inventar uma data. Nao saber a data e diferente de nao
+ * ter havido cruzamento, e o numero na tela nao pode confundir as duas. */
+export function lerCruzamento(precos, corte = CORTES.cruz) {
+  const s = (precos || []).filter((x) => Number.isFinite(x) && x > 0);
+  if (s.length < corte.lenta + 2) return null;
+
+  const mediaEm = (fim, n) => {
+    let soma = 0;
+    for (let i = fim - n + 1; i <= fim; i++) soma += s[i];
+    return soma / n;
+  };
+
+  /* O sinal de (rapida - lenta) em cada dia em que as duas existem. */
+  const sinais = [];
+  for (let i = corte.lenta - 1; i < s.length; i++) {
+    sinais.push(mediaEm(i, corte.rapida) >= mediaEm(i, corte.lenta) ? 1 : -1);
+  }
+
+  const agora = sinais[sinais.length - 1];
+  let virouHa = null;
+  for (let k = sinais.length - 1; k > 0; k--) {
+    if (sinais[k] !== sinais[k - 1]) { virouHa = sinais.length - 1 - k; break; }
+  }
+
+  const ouro = agora === 1;
+  const visivel = sinais.length - 1;   // quantos dias da pra enxergar pra tras
+
+  const quando = virouHa == null
+    ? "ha mais de " + visivel + " dias (nao da pra ver mais fundo com o historico que eu tenho)"
+    : virouHa === 0 ? "hoje"
+    : "ha " + virouHa + (virouHa === 1 ? " dia" : " dias");
+
+  return {
+    nome: ouro ? "Cruz de Ouro" : "Cruz da Morte",
+    tipo: ouro ? "ouro" : "morte",
+    quandoDias: virouHa,
+    diasVisiveis: visivel,
+    rapida: mediaEm(s.length - 1, corte.rapida),
+    lenta: mediaEm(s.length - 1, corte.lenta),
+    zona: ouro ? "topo" : "fundo",
+    lado: ouro ? "bull" : "bear",
+    texto: (ouro
+        ? "Cruz de Ouro: a media de 50 dias esta ACIMA da de 200, " + quando
+        : "Cruz da Morte: a media de 50 dias esta ABAIXO da de 200, " + quando) +
+      /* A ressalva e dele, e sem ela o sinal engana: o cruzamento vale pro
+         medio prazo, e no curto costuma marcar o contrario. Dar o sinal sem a
+         ressalva seria dar metade do que ele ensina. */
+      " - no curso, o cruzamento vale pro medio prazo; no curto ele costuma " +
+      (ouro ? "marcar um topo local, com acomodacao depois"
+            : "marcar o fundo daquele momento, com repique depois"),
+  };
+}
+
 /* A temporada das altcoins, pela fórmula do curso: ALTS/BTC.
  *
  * "A fórmula mágica: ALTS/BTC" — o Portal 2 mostra o dinheiro descendo de
@@ -243,7 +422,7 @@ export function vereditoDoCurso(lidos) {
  * fica mais firme do que qualquer uma sozinha. Quando discordam, o radar DIZ
  * que discordam — porque a discordância é a informação, e escolher uma delas
  * calado seria esconder o que mais importa saber. */
-export function juntarLeituras(doCurso, doRadar, media50) {
+export function juntarLeituras(doCurso, doRadar, media50, estrutura = null) {
   const fase = doCurso?.fase;
   const cicloRadar = doRadar?.ciclo;
 
@@ -272,11 +451,45 @@ export function juntarLeituras(doCurso, doRadar, media50) {
   }
 
   /* A média de 50 entra como nota separada e não no confronto: ela vira rápido
-     por desenho, e misturá-la ao veredito faria o ciclo balançar toda semana. */
+     por desenho, e misturá-la ao veredito faria o ciclo balançar toda semana.
+     A FAIXA DE BULL MARKET é o contrário — ela é semanal, e é a linha que ele
+     chama de estrutura. Por isso ela vira a TERCEIRA RÉGUA, e não uma nota. */
+  const faixa = estrutura?.faixaDeBull || null;
+  const cruz = estrutura?.cruzamento || null;
+
+  /* "a gente sempre vai corroborar os indicadores e eles sempre vão rimar um
+     com o outro" — ele, no vídeo de 20/05/2026. É essa a conta aqui: quantas
+     das três réguas apontam pro mesmo lado. Dentro da faixa não conta como
+     lado nenhum, porque não é. */
+  const lados = [
+    sugerido,                                        // a régua do curso
+    cicloRadar === "indefinido" ? null : cicloRadar, // a régua do radar
+    faixa && faixa.lado !== "na-faixa" ? faixa.lado : null,
+  ].filter(Boolean);
+
+  const rimam = lados.length >= 2 && lados.every((x) => x === lados[0]);
+
+  let recadoDaFaixa = null;
+  if (faixa) {
+    recadoDaFaixa = faixa.texto;
+    if (rimam && lados.length === 3) {
+      recadoDaFaixa += " · as três réguas apontam pro mesmo lado";
+    } else if (faixa.lado !== "na-faixa" && sugerido && faixa.lado !== sugerido) {
+      recadoDaFaixa += " · e isso é o CONTRÁRIO do que os indicadores do curso marcam";
+    }
+  }
+
   return {
     curso: doCurso || null,
     radar: doRadar || null,
     media50: media50 || null,
+    faixaDeBull: faixa,
+    cruzamento: cruz,
+    /* Quantas réguas puderam ser lidas, e se elas rimam. Duas de duas rimando
+       é diferente de três de três, e a tela precisa poder dizer qual foi. */
+    quantasReguas: lados.length,
+    rimam,
+    recadoDaFaixa,
     concordam, discordam, recado,
   };
 }

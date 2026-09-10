@@ -260,12 +260,24 @@ export async function estoqueGlobalDeStables() {
   return serie.map((p) => p.stables).filter((v) => Number.isFinite(v) && v > 0);
 }
 
-/* O preço do Bitcoin, longo o bastante pra uma média de 200 dias.
+/* O preço do Bitcoin, longo o bastante pra tudo o que se mede sobre ele.
  *
- * 260 e não 200: a média precisa de 200 pontos e a idade do regime precisa de
- * folga além disso pra saber há quantos dias virou. 260 pontos num token cabe
- * numa chamada (o teto é de ~500 pontos, veja historicoDePrecos). */
-export async function precoDoBitcoin(dias = 260) {
+ * ERA 260, VIROU 400, e cada número tem um dono:
+ *
+ *   200  a média de 200 dias precisa de 200 pontos
+ *   260  + folga pra `idadeDoRegime` saber há quantos dias o preço virou
+ *   400  + a FAIXA DE BULL MARKET, que é semanal: 21 semanas são 147 dias, e
+ *        a EMA precisa de muito mais que isso pra a semente sumir. Com 400
+ *        dias são 57 semanas, e o resto do histórico deixa de pesar (medido:
+ *        cortar 5 semanas mexe 0,02% na EMA de hoje).
+ *
+ * E TAMBÉM: a cruz de ouro só é visível onde as DUAS médias existem. Com 400
+ * dias dá pra enxergar 200 dias de cruzamento pra trás; com 260, só 60.
+ *
+ * CUSTO: zero chamadas novas. O teto de `historicoDePrecos` é ~450 pontos por
+ * pedido, e um token só cabe inteiro nele. Continua sendo UM pedido — só que
+ * agora ele volta cheio em vez de pela metade. */
+export async function precoDoBitcoin(dias = 400) {
   const { series } = await historicoDePrecos(["coingecko:bitcoin"], { dias });
   return series.get("coingecko:bitcoin") || [];
 }
