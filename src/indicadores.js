@@ -338,6 +338,97 @@ export function lerCruzamento(precos, corte = CORTES.cruz) {
   };
 }
 
+/* AS SÉRIES DO GRÁFICO — preço, média de 50, média de 200 e a faixa de bull.
+ *
+ * POR QUE ISTO EXISTE. O gráfico do painel desenhava a média de 200 dias como
+ * uma LINHA RETA, porque só guardava o valor de hoje. Ele olhou e disse: "o
+ * eixo do ciclo é estagnado, parece uma foto (...) seria bom um gráfico de
+ * verdade com os indicadores verdadeiros".
+ *
+ * Estava certo, e o defeito era conceitual: uma média móvel desenhada reta não
+ * é uma média móvel, é o valor de hoje fingindo ser uma série. Quem olha vê o
+ * preço cruzando uma linha horizontal e conclui coisas erradas sobre quando
+ * cruzou — porque a linha de verdade estava em outro lugar naquele dia.
+ *
+ * A JANELA É DE 200 DIAS, e o número não é estético. É o maior pedaço em que
+ * as QUATRO linhas existem ao mesmo tempo, dado que a fonte traz 400 dias:
+ *
+ *   média de 200   precisa de 200 dias antes de cada ponto  -> sobram 200
+ *   faixa de bull  precisa de 21 semanas (147 dias)         -> sobram 253
+ *   média de 50    precisa de 50                            -> sobram 350
+ *
+ * Duzentos é o menor dos três, e é onde nenhuma linha começa no meio do
+ * gráfico. Linha que aparece do nada no meio faz o leitor achar que o
+ * indicador mudou, quando só faltava histórico.
+ *
+ * CUSTO: as médias saem de soma corrente (uma passada só). A faixa é
+ * recalculada em cada ponto DESENHADO, não em cada dia — são ~100 pontos
+ * vezes ~50 semanas, uns 5 mil passos. Cabe folgado até nos 10 milissegundos
+ * do plano gratuito. */
+export function seriesDoGrafico(precos, pontos = 100, corte = CORTES) {
+  const s = (precos || []).filter((x) => Number.isFinite(x) && x > 0);
+  const lenta = corte.media.lenta;
+  if (s.length < lenta + 10) return null;
+
+  /* Quantos dias dá pra mostrar com TODAS as linhas de pé. */
+  const janela = Math.min(s.length - lenta, s.length - corte.faixaDeBull.ema * 7);
+  if (janela < 20) return null;
+  const inicio = s.length - janela;
+
+  /* Média simples em qualquer ponto, por soma corrente: uma passada, não uma
+     multiplicação. Com 200 dias de janela e média de 200, a conta ingênua
+     faria 40 mil somas; esta faz 400. */
+  const medias = (n) => {
+    const fora = [];
+    let soma = 0;
+    for (let i = 0; i < s.length; i++) {
+      soma += s[i];
+      if (i >= n) soma -= s[i - n];
+      fora.push(i >= n - 1 ? soma / n : null);
+    }
+    return fora;
+  };
+  const m50 = medias(corte.media.curso);
+  const m200 = medias(lenta);
+
+  /* A faixa num dia qualquer: as semanas contadas de trás pra frente A PARTIR
+     DAQUELE DIA — a mesma regra de `emSemanas`, só que ancorada no passado.
+     Ancorar sempre em hoje daria a faixa de hoje repetida no gráfico inteiro,
+     que é o mesmo defeito da linha reta com outro nome. */
+  const faixaEm = (fim) => {
+    const sem = [];
+    for (let i = fim; i >= 0; i -= 7) sem.push(s[i]);
+    sem.reverse();
+    if (sem.length < corte.faixaDeBull.ema + 2) return null;
+    const sma = sem.slice(-corte.faixaDeBull.sma).reduce((a, b) => a + b, 0) / corte.faixaDeBull.sma;
+    const alfa = 2 / (corte.faixaDeBull.ema + 1);
+    let ema = sem.slice(0, corte.faixaDeBull.ema).reduce((a, b) => a + b, 0) / corte.faixaDeBull.ema;
+    for (let i = corte.faixaDeBull.ema; i < sem.length; i++) ema = sem[i] * alfa + ema * (1 - alfa);
+    return [Math.min(sma, ema), Math.max(sma, ema)];
+  };
+
+  const quantos = Math.max(20, Math.min(pontos, janela));
+  const preco = [], media50 = [], media200 = [], faixaBaixa = [], faixaAlta = [], indices = [];
+  for (let k = 0; k < quantos; k++) {
+    const i = inicio + Math.round((k / (quantos - 1)) * (janela - 1));
+    indices.push(i);
+    preco.push(s[i]);
+    media50.push(m50[i]);
+    media200.push(m200[i]);
+    const f = faixaEm(i);
+    faixaBaixa.push(f ? f[0] : null);
+    faixaAlta.push(f ? f[1] : null);
+  }
+
+  return {
+    dias: janela,
+    /* Quantos dias atrás está cada ponto, contando de hoje. A tela usa isto
+       pra pôr data no eixo sem eu ter que guardar 100 datas. */
+    atrasDe: indices.map((i) => s.length - 1 - i),
+    preco, media50, media200, faixaBaixa, faixaAlta,
+  };
+}
+
 /* A temporada das altcoins, pela fórmula do curso: ALTS/BTC.
  *
  * "A fórmula mágica: ALTS/BTC" — o Portal 2 mostra o dinheiro descendo de

@@ -282,6 +282,35 @@ export async function precoDoBitcoin(dias = 400) {
   return series.get("coingecko:bitcoin") || [];
 }
 
+/* O PRECO DO BITCOIN POR HORA — o gráfico de hoje, e o da semana.
+ *
+ * Ele perguntou se o gráfico era vivo. A ponta passou a seguir o preço de
+ * agora, mas o desenho continuava sendo de FECHAMENTOS DIÁRIOS: dava pra ver a
+ * ponta subir e descer, e não dava pra ver que o Bitcoin caiu de manhã e
+ * voltou à tarde. Movimento de dentro do dia não existe numa série diária, por
+ * mais rápido que ela se atualize.
+ *
+ * São duas perguntas diferentes, e por isso são dois gráficos:
+ *
+ *   200 dias, diário   "onde estou no ciclo" — com as médias e a faixa
+ *   7 dias / 24 horas  "o que aconteceu agora" — só o preço, de hora em hora
+ *
+ * Misturar as duas num gráfico só daria uma linha que não responde nenhuma:
+ * ou a escala do ciclo achata o dia, ou a do dia some com o ciclo.
+ *
+ * BARATO: 24 ou 168 pontos, uns 6 KB. Cabe até no plano gratuito, e a rota que
+ * serve isto guarda por 5 minutos — o preço vivo já vem por outro caminho, e
+ * quem olha a forma da semana não precisa dela refeita a cada F5. */
+export async function precoPorHora(horas = 24) {
+  const r = await fetch(PRECOS + "/coingecko:bitcoin?period=1h&span=" + Math.min(336, Math.max(6, horas)));
+  if (!r.ok) throw new Error("preço por hora: HTTP " + r.status);
+  const d = await r.json();
+  const lista = d?.coins?.["coingecko:bitcoin"]?.prices || [];
+  return lista
+    .filter((p) => Number(p?.price) > 0 && Number(p?.timestamp) > 0)
+    .map((p) => ({ t: Number(p.timestamp), preco: Number(p.price) }));
+}
+
 /* OS INDICADORES DE CICLO DO CURSO — MVRV, Z-Score, Puell e VDD.
  *
  * Fonte: bitcoin-data.com. Aberta, sem chave, com histórico diário. É a única
@@ -317,13 +346,44 @@ const INDICADORES = [
   { chave: "vdd", caminho: "/vdd-multiple/last", campo: "vddMultiple" },
 ];
 
-export async function indicadoresDoCiclo() {
-  const fora = { valores: {}, falhas: [] };
+export async function indicadoresDoCiclo(jaTenho = null) {
+  const fora = { valores: {}, falhas: [], pulados: [] };
   const respirar = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+  /* SÓ PEDE O QUE FALTA, e isto é o conserto de um defeito que o Rayakuza viu na
+   * tela antes de mim: "vc tem tantos dados mas ali aparece praticamente nada".
+   *
+   * A fonte dá 10 chamadas por hora POR IP — e o IP não é nosso, é o de saída
+   * compartilhado da Cloudflare. Ou seja: o balde é dividido com todo mundo que
+   * roda Worker no mesmo lugar, e a gente chega nele já quase vazio. Quatro
+   * pedidos por rodada, três rodadas, e a resposta era 429 nos quatro.
+   *
+   * Um indicador cujo valor guardado JÁ É DE HOJE não precisa ser pedido de
+   * novo: ele muda uma vez por dia na origem. Pular esses libera o balde pros
+   * que faltam, e no caso comum (um chegou de manhã) a rodada da tarde pede um
+   * ou dois em vez de quatro.
+   *
+   * A regra é conservadora de propósito: pula só o que é do dia de hoje. Um
+   * valor de ontem é pedido de novo, porque o de hoje pode ter saído. */
+  const hoje = new Date().toISOString().slice(0, 10);
+  let pedidos = 0;
 
   for (let i = 0; i < INDICADORES.length; i++) {
     const ind = INDICADORES[i];
-    if (i) await respirar(1500);
+    const guardado = jaTenho?.[ind.chave];
+    /* Pula so o que ja veio DESTA fonte hoje.
+     *
+     * Um valor de hoje que veio da fonte reserva NAO conta como pronto: esta
+     * aqui e a referencia, e vale tentar de novo. Se ela recusar, o substituto
+     * continua valendo e nada se perde — e se ela aceitar, a leitura melhora.
+     * Pular por causa do substituto congelaria o radar na segunda melhor
+     * fonte pra sempre, sem nada na tela dizendo isso. */
+    if (guardado && Number.isFinite(guardado.valor) && guardado.dia === hoje &&
+        guardado.fonte !== "coinmetrics") {
+      fora.pulados.push(ind.chave);
+      continue;
+    }
+    if (pedidos++) await respirar(1500);
     try {
       const r = await fetch(CASA_DOS_INDICADORES + ind.caminho, {
         headers: { accept: "application/json" },

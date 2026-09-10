@@ -155,7 +155,27 @@ export function paginaDoPainel() {
 
   /* O Bitcoin: gráfico, régua da faixa e alvos de preço. */
   .btcCartao .numeros { margin-top: 0; }
-  .btcGraf { width: 100%; height: 96px; display: block; margin: 4px 0 2px; }
+  .janelaBtc { display: flex; gap: 4px; margin: 8px 0 2px; }
+  .jbOp { background: transparent; border: 1px solid var(--linha); color: var(--fraco);
+          border-radius: 999px; padding: 3px 11px; font-size: 11px; cursor: pointer;
+          font-family: inherit; }
+  .jbOp.ativo { border-color: var(--realce); color: var(--realce); }
+  .grafEsperando { color: var(--fraco); font-size: 12px; padding: 34px 0; text-align: center; }
+  .grafLegenda { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 5px 2px 0;
+                 font-size: 10px; color: var(--fraco); }
+  .grafLegenda span { display: inline-flex; align-items: center; gap: 4px; }
+  .grafLegenda i { width: 11px; height: 2px; border-radius: 2px; display: inline-block; }
+  .lgPreco { background: var(--realce); height: 2.5px !important; }
+  .lgFaixa { background: var(--sobe); opacity: .45; height: 7px !important; border-radius: 2px; }
+  .lg200 { background: var(--alerta); }
+  .lg50 { background: var(--fraco); }
+  /* ALTURA AUTOMATICA, e o motivo e o texto.
+     Com altura fixa e viewBox estreito, o SVG ficava centralizado numa caixa
+     larga, deixando tarja preta dos dois lados. A saida obvia seria
+     preserveAspectRatio="none", que estica tudo — inclusive as datas do eixo,
+     que sairiam achatadas. Entao a proporcao mora no viewBox (720x150) e a
+     altura segue a largura. */
+  .btcGraf { width: 100%; height: auto; display: block; margin: 4px 0 2px; }
   .faixaRegua { margin: 8px 0 10px; }
   .faixaBarra { position: relative; height: 6px; border-radius: 999px;
     background: linear-gradient(90deg, var(--desce), var(--alerta), var(--sobe)); opacity: .55; }
@@ -164,6 +184,9 @@ export function paginaDoPainel() {
   .faixaPontas { display: flex; justify-content: space-between; font-size: 11.5px;
     color: var(--texto); margin-top: 5px; line-height: 1.3; }
   .alertasBtc { margin-top: 11px; border-top: 1px solid var(--linha); padding-top: 9px; }
+  .alertaLinha.avisado { opacity: .55; }
+  .alertaNota { font-size: 10.5px; line-height: 1.45; color: var(--fraco);
+                margin-top: 7px; }
   .alertasTit { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
     color: var(--fraco); margin-bottom: 5px; }
   .alertaLinha { display: flex; justify-content: space-between; font-size: 12.5px;
@@ -1061,41 +1084,253 @@ function grupo(titulo, nota, itens, desenha, vazio, total = null) {
  * O gráfico é SVG escrito à mão. Nenhuma biblioteca: o painel inteiro não tem
  * dependência externa, e um gráfico não é motivo pra criar a primeira.
  * ------------------------------------------------------------------------- */
-function graficoDoBtc(serie, media, largura, altura) {
+/* O SELETOR DAS TRES JANELAS.
+ *
+ * Botao de verdade e nao aba: sao tres estados de um grafico so, nao tres
+ * telas. E ele mora ACIMA do desenho porque quem troca de janela esta olhando
+ * o desenho — o controle tem que estar onde o olho ja esta.
+ *
+ * A escolha NAO e guardada entre visitas, e isso e decisao. O radar existe pra
+ * situar no ciclo; abrir sempre em 24 horas ensinaria a olhar o ruido primeiro,
+ * que e exatamente o habito que o metodo tenta desfazer. */
+function seletorDaJanela() {
+  var opcoes = [["200d", "200 dias"], ["7d", "7 dias"], ["24h", "24 horas"]];
+  return '<div class="janelaBtc">' + opcoes.map(function (o) {
+    return '<button type="button" class="jbOp' + (janelaDoBtc === o[0] ? " ativo" : "") +
+      '" data-janela="' + o[0] + '">' + o[1] + '</button>';
+  }).join("") + '</div>';
+}
+
+function graficoDoBtc(g, serieVelha, mediaHoje, precoVivo, cruz, largura, altura) {
+  /* SEM AS SERIES, DESENHA O QUE DA — e diz que esta faltando.
+   *
+   * A leitura guardada da rodada de hoje pode ser anterior a este codigo. Em
+   * vez de sumir com o grafico, ele cai no modo antigo (preco + linha reta) e
+   * a legenda EXPLICA que as medias chegam na proxima rodada. Tela que some
+   * sem dizer por que e o mesmo defeito de outra forma. */
+  var temSeries = g && g.preco && g.preco.length > 4;
+  var serie = temSeries ? g.preco : serieVelha;
   if (!serie || serie.length < 4) return "";
-  var min = Math.min.apply(null, serie), max = Math.max.apply(null, serie);
-  if (media != null) { min = Math.min(min, media); max = Math.max(max, media); }
-  var vao = (max - min) || 1;
-  var m = 6;
-  var x = function (i) { return m + (i / (serie.length - 1)) * (largura - m * 2); };
-  var y = function (v) { return m + (1 - (v - min) / vao) * (altura - m * 2); };
 
-  var linha = serie.map(function (v, i) { return (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); }).join(" ");
-  var area = linha + " L" + x(serie.length - 1).toFixed(1) + "," + (altura - m) + " L" + x(0).toFixed(1) + "," + (altura - m) + " Z";
-
-  var mediaLinha = "";
-  if (media != null) {
-    var ym = y(media).toFixed(1);
-    mediaLinha = '<line x1="' + m + '" y1="' + ym + '" x2="' + (largura - m) + '" y2="' + ym +
-      '" stroke="var(--alerta)" stroke-width="1.2" stroke-dasharray="4 4" opacity=".85"/>' +
-      '<text x="' + (largura - m - 2) + '" y="' + (Number(ym) - 5) + '" text-anchor="end" ' +
-      'font-size="9.5" fill="var(--alerta)">média 200d</text>';
+  /* A PONTA DA LINHA E O PRECO DE AGORA.
+   *
+   * Ele perguntou: "isso seria um grafico vivo atualizando?". Em parte era, e
+   * a parte que faltava era um defeito meu: a bolinha do fim ia no preco vivo,
+   * mas a LINHA terminava no fechamento da rodada da manha. A bolinha flutuava
+   * solta, desligada da ponta da linha — que e pior que nao se mexer, porque
+   * parece erro de desenho.
+   *
+   * Trocar o ultimo ponto pelo preco de agora nao e maquiagem: o ultimo ponto
+   * da serie E o dia de hoje, e o preco de hoje mudou desde a rodada. O numero
+   * novo e mais verdadeiro que o guardado, nao menos.
+   *
+   * A COPIA e obrigatoria. 'g.preco' e o array guardado, usado tambem pelas
+   * contas de variacao da janela; escrever nele aqui faria o resto da tela
+   * passar a ler um numero que so existia pro desenho — o tipo de efeito
+   * colateral que aparece semanas depois como "esse numero nao bate". */
+  if (precoVivo > 0) {
+    serie = serie.slice();
+    serie[serie.length - 1] = precoVivo;
   }
 
-  var ultimo = serie[serie.length - 1];
+  /* A escala cobre TUDO o que vai ser desenhado. Se a faixa sair fora da caixa
+     o leitor ve uma linha cortada e acha que o indicador parou. */
+  var todos = serie.slice();
+  if (temSeries) {
+    [g.media50, g.media200, g.faixaBaixa, g.faixaAlta].forEach(function (a) {
+      (a || []).forEach(function (v) { if (v != null) todos.push(v); });
+    });
+  } else if (mediaHoje != null) { todos.push(mediaHoje); }
+  if (precoVivo > 0) todos.push(precoVivo);
+
+  var min = Math.min.apply(null, todos), max = Math.max.apply(null, todos);
+  var vao = (max - min) || 1;
+  /* A margem DIREITA abre espaco pros precos do eixo; a de baixo, pras datas. */
+  var mE = 6, mD = 34, mT = 10, mB = 16;
+  var n = serie.length;
+  var x = function (i) { return mE + (i / (n - 1)) * (largura - mE - mD); };
+  var y = function (v) { return mT + (1 - (v - min) / vao) * (altura - mT - mB); };
+
+  /* O EIXO DE PRECO, do lado direito.
+   *
+   * Ele olhou o grafico pronto e disse: "nao consigo ver valor nenhum". Estava
+   * certo, e a falta era antiga — o desenho mostrava a FORMA e nao dizia
+   * quanto vale nenhum ponto. Da pra ver que subiu; nao da pra saber de quanto
+   * pra quanto, que e a unica pergunta que importa pra quem tem dinheiro na
+   * mesa.
+   *
+   * Tres marcas: o teto da escala, o meio e o piso. Nao mais que isso — um
+   * grafico deste tamanho com seis linhas de grade vira um borrao, e o preco
+   * exato de agora ja esta na celula grande logo acima.
+   *
+   * As linhas de grade sao MUITO fracas de proposito: elas orientam o olho e
+   * nao competem com as quatro linhas que sao a informacao. */
+  var eixoDePreco = function () {
+    var fora = "";
+    var mil = function (v) {
+      return v >= 1000 ? "$" + Math.round(v / 1000) + "k" : "$" + Math.round(v);
+    };
+    [max, (max + min) / 2, min].forEach(function (v) {
+      var yy = y(v);
+      fora += '<line x1="' + mE + '" y1="' + yy.toFixed(1) + '" x2="' + (largura - mD) +
+        '" y2="' + yy.toFixed(1) + '" stroke="var(--linha)" stroke-width=".7" opacity=".45"/>' +
+        '<text x="' + (largura - mD - 1) + '" y="' + (yy - 2.5).toFixed(1) +
+        '" font-size="8.5" fill="var(--fraco)" text-anchor="end">' + esc(mil(v)) + '</text>';
+    });
+    return fora;
+  };
+
+  var caminho = function (a, so) {
+    var d = "", ligado = false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] == null) { ligado = false; continue; }
+      d += (ligado ? "L" : "M") + x(i).toFixed(1) + "," + y(a[i]).toFixed(1) + " ";
+      ligado = true;
+    }
+    return d.trim();
+  };
+
+  var partes = eixoDePreco();
+
+  /* A FAIXA DE BULL MARKET COMO AREA, e nao como duas linhas.
+   *
+   * Ela e uma FAIXA — o espaco entre a media de 20 semanas e a de 21. Desenhar
+   * duas linhas quase coladas so faria sujeira; a area diz o que ela e: uma
+   * zona, com espessura, que o preco atravessa. */
+  if (temSeries && g.faixaAlta && g.faixaBaixa) {
+    var cima = "", baixo = "";
+    for (var i = 0; i < n; i++) {
+      if (g.faixaAlta[i] == null) continue;
+      cima += (cima ? "L" : "M") + x(i).toFixed(1) + "," + y(g.faixaAlta[i]).toFixed(1) + " ";
+    }
+    for (var i = n - 1; i >= 0; i--) {
+      if (g.faixaBaixa[i] == null) continue;
+      baixo += "L" + x(i).toFixed(1) + "," + y(g.faixaBaixa[i]).toFixed(1) + " ";
+    }
+    if (cima && baixo) {
+      partes += '<path d="' + cima + baixo + 'Z" fill="var(--sobe)" opacity=".20"/>';
+    }
+  }
+
+  // a area do preco, so um fundo suave
+  var linhaPreco = caminho(serie);
+  partes += '<path d="' + linhaPreco + " L" + x(n - 1).toFixed(1) + "," + (altura - mB) +
+    " L" + x(0).toFixed(1) + "," + (altura - mB) + ' Z" fill="url(#gBtc)"/>';
+
+  /* CADA LINHA SO E DESENHADA SE ELA EXISTE.
+     Era 'if (temSeries)', e temSeries so olha o PRECO. No grafico por hora o
+     preco existe e as medias nao — entao caminho(null) estourava dentro do
+     desenho, o bloco inteiro sumia, e a tela ficava eternamente em
+     "buscando...". Uma condicao que fala por quatro arrays acaba mentindo
+     sobre tres deles. */
+  if (temSeries && g.media200) {
+    partes += '<path d="' + caminho(g.media200) + '" fill="none" stroke="var(--alerta)" ' +
+      'stroke-width="1.3" opacity=".9" stroke-linejoin="round"/>';
+  }
+  if (temSeries && g.media50) {
+    partes += '<path d="' + caminho(g.media50) + '" fill="none" stroke="var(--fraco)" ' +
+      'stroke-width="1.1" opacity=".9" stroke-dasharray="3 3" stroke-linejoin="round"/>';
+  } else if (mediaHoje != null) {
+    /* O modo antigo, e ele fica MARCADO como aproximacao. */
+    var ym = y(mediaHoje).toFixed(1);
+    partes += '<line x1="' + mE + '" y1="' + ym + '" x2="' + (largura - mD) + '" y2="' + ym +
+      '" stroke="var(--alerta)" stroke-width="1.2" stroke-dasharray="4 4" opacity=".6"/>';
+  }
+
+  // o preco por cima de tudo
+  partes += '<path d="' + linhaPreco + '" fill="none" stroke="var(--realce)" stroke-width="1.7" ' +
+    'stroke-linejoin="round" stroke-linecap="round"/>';
+
+  /* A CRUZ, marcada onde ela aconteceu.
+   *
+   * 'quandoDias' conta de hoje pra tras; 'atrasDe' diz quantos dias atras esta
+   * cada ponto. Achar o ponto mais proximo e melhor que interpolar: o grafico
+   * tem 100 pontos pra 200 dias, entao cada ponto ja vale dois dias, e fingir
+   * precisao de um dia seria inventar. */
+  if (temSeries && cruz && cruz.quandoDias != null && g.atrasDe) {
+    var alvoDias = cruz.quandoDias, melhorI = -1, melhorD = 1e9;
+    for (var i = 0; i < g.atrasDe.length; i++) {
+      var d = Math.abs(g.atrasDe[i] - alvoDias);
+      if (d < melhorD) { melhorD = d; melhorI = i; }
+    }
+    if (melhorI >= 0 && melhorD <= 4 && g.media50[melhorI] != null) {
+      var cx = x(melhorI), cy = y(g.media50[melhorI]);
+      var ouro = cruz.tipo === "ouro";
+      partes += '<line x1="' + cx.toFixed(1) + '" y1="' + mT + '" x2="' + cx.toFixed(1) +
+        '" y2="' + (altura - mB) + '" stroke="' + (ouro ? "var(--sobe)" : "var(--desce)") +
+        '" stroke-width="1" stroke-dasharray="2 3" opacity=".7"/>' +
+        '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="3.4" fill="none" ' +
+        'stroke="' + (ouro ? "var(--sobe)" : "var(--desce)") + '" stroke-width="1.6"/>';
+    }
+  }
+
+  /* O PONTO DE AGORA, na ponta da linha — que agora e o mesmo lugar.
+   *
+   * O relogio de 60 segundos busca o preco e, quando ele mudou, manda
+   * 'desenhar()' — que refaz a tela inteira, este grafico junto. Entao a ponta
+   * anda de verdade a cada minuto.
+   *
+   * O QUE NAO SE MEXE, e nao deve: o resto da curva. Sao 200 fechamentos
+   * diarios, e um fechamento de tres meses atras nao muda porque o preco de
+   * agora mudou. Grafico que redesenha o passado a cada minuto nao esta vivo,
+   * esta mentindo. */
+  var ultimo = serie[n - 1];
+  partes += '<circle cx="' + x(n - 1).toFixed(1) + '" cy="' + y(ultimo).toFixed(1) +
+    '" r="3.2" fill="var(--realce)"><animate attributeName="opacity" values="1;.35;1" ' +
+    'dur="2.4s" repeatCount="indefinite"/></circle>';
+
+  /* AS DATAS. Um grafico sem eixo de tempo e um desenho bonito: da pra ver que
+     subiu, nao da pra saber quando.
+
+     Os rotulos podem vir prontos (g.rotulos), e vem no grafico por hora: la o
+     eixo e de HORAS, e escrever "10 set" tres vezes seguidas nao ajudaria
+     ninguem. O de 200 dias continua calculando data a partir de atrasDe. */
+  if (g && g.rotulos && g.rotulos.length === 3) {
+    var ondeX = [mE, largura / 2, largura - mD];
+    var ancoras = ["start", "middle", "end"];
+    g.rotulos.forEach(function (txt, k) {
+      partes += '<text x="' + ondeX[k].toFixed(1) + '" y="' + (altura - 4) +
+        '" font-size="8.5" fill="var(--fraco)" text-anchor="' + ancoras[k] + '">' +
+        esc(txt) + '</text>';
+    });
+  } else if (temSeries && g.atrasDe) {
+    var dataDe = function (atras) {
+      var d = new Date(Date.now() - atras * 86400000);
+      /* "23 de fev" vira "23 fev": o eixo tem tres rotulos e pouca largura, e
+         a preposicao nao ajuda ninguem a ler uma data. */
+      return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+        .replace(" de ", " ").replace(".", "");
+    };
+    var marcas = [0, Math.floor((n - 1) / 2), n - 1];
+    marcas.forEach(function (i, k) {
+      partes += '<text x="' + (k === 0 ? mE : k === 2 ? largura - mD : x(i)).toFixed(1) +
+        '" y="' + (altura - 4) + '" font-size="8.5" fill="var(--fraco)" text-anchor="' +
+        (k === 0 ? "start" : k === 2 ? "end" : "middle") + '">' +
+        esc(i === 0 ? dataDe(g.atrasDe[0]) : i === n - 1 ? "hoje" : dataDe(g.atrasDe[i])) +
+        '</text>';
+    });
+  }
+
   return '<svg class="btcGraf" viewBox="0 0 ' + largura + ' ' + altura + '" ' +
-      'preserveAspectRatio="none" role="img" aria-label="preço do Bitcoin nos últimos meses">' +
+      'role="img" aria-label="preço do Bitcoin, médias de 50 e 200 dias e a faixa de bull market">' +
       '<defs><linearGradient id="gBtc" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0%" stop-color="var(--realce)" stop-opacity=".28"/>' +
+        '<stop offset="0%" stop-color="var(--realce)" stop-opacity=".22"/>' +
         '<stop offset="100%" stop-color="var(--realce)" stop-opacity="0"/>' +
-      '</linearGradient></defs>' +
-      '<path d="' + area + '" fill="url(#gBtc)"/>' +
-      '<path d="' + linha + '" fill="none" stroke="var(--realce)" stroke-width="1.6" ' +
-        'stroke-linejoin="round" stroke-linecap="round"/>' +
-      mediaLinha +
-      '<circle cx="' + x(serie.length - 1).toFixed(1) + '" cy="' + y(ultimo).toFixed(1) +
-        '" r="3" fill="var(--realce)"/>' +
-    '</svg>';
+      '</linearGradient></defs>' + partes +
+    '</svg>' +
+    (g && g.porHora
+      ? '<div class="grafLegenda"><span><i class="lgPreco"></i>Bitcoin, de hora em hora</span>' +
+        '<span>sem as médias: elas são contas de meses, e sobre este pedaço ' +
+        'seriam três linhas retas sem significado</span></div>'
+      : temSeries
+      ? '<div class="grafLegenda">' +
+          '<span><i class="lgPreco"></i>Bitcoin</span>' +
+          '<span><i class="lgFaixa"></i>faixa de bull market</span>' +
+          '<span><i class="lg200"></i>média 200d</span>' +
+          '<span><i class="lg50"></i>média 50d</span>' +
+        '</div>'
+      : '<div class="grafLegenda"><span>as médias entram no gráfico na próxima ' +
+        'rodada — a leitura guardada é de antes delas existirem</span></div>');
 }
 
 /* ---------------------------------------------------------------------------
@@ -1115,13 +1350,90 @@ function graficoDoBtc(serie, media, largura, altura) {
  *             barata que sabe: a mesma que cota os tokens da carteira.
  *
  *   DA MANHA  a media de 200 dias, a serie do grafico, o regime e ha quantos
- *             dias ele esta desse lado. Sao 260 dias de historico por leitura;
+ *             dias ele esta desse lado. Sao 400 dias de historico por leitura
  *             buscar a cada F5 pagaria duas chamadas ao DefiLlama pra receber
  *             um numero que muda uma vez por dia.
  *
  * E o que DEPENDE do preco se recalcula com o vivo: quanto esta contra a
  * media, onde esta na faixa, e a distancia dos alvos dele. Misturar preco novo
  * com distancia velha daria duas verdades na mesma tela. */
+/* QUAL JANELA DO BITCOIN ESTA NA TELA.
+ *
+ * Tres perguntas diferentes, tres janelas — e a escolha fica com quem olha, em
+ * vez de eu adivinhar. "200d" e a do ciclo, com as medias e a faixa; as outras
+ * duas sao so preco, de hora em hora.
+ *
+ * O padrao e 200d de proposito: o radar existe pra situar no ciclo, e abrir no
+ * grafico de 24 horas ensinaria a olhar o ruido primeiro. */
+/* O CICLO BUSCADO PELA TELA, sem esperar a rodada.
+ *
+ * A leitura guardada continua valendo e continua sendo a que tem data. Isto
+ * aqui e o ATALHO: as series do grafico, a faixa e a cruz saem de uma rota
+ * propria, guardada meia hora na borda, e chegam poucos segundos depois da
+ * pagina abrir.
+ *
+ * Por que existe: as tres coisas foram publicadas e ele nao conseguia ver
+ * nenhuma, porque dependiam da proxima rodada. Fazer a pessoa esperar horas
+ * pra ver uma medida que custa um pedido de rede e transferir pra ela o preco
+ * de uma escolha minha. */
+var cicloVivo = null;
+var cicloBuscado = false;
+
+function pedirCicloVivo() {
+  if (cicloBuscado) return;
+  cicloBuscado = true;
+  /* A VERSAO DO CODIGO ENTRA NA CHAVE DO CACHE.
+     Esta rota fica guardada meia hora na borda, e o que ela devolve MUDA
+     quando eu publico. Sem a versao aqui, uma correcao publicada levava ate
+     meia hora pra chegar em quem ja tinha aberto — e eu perdi tempo achando
+     que o codigo estava errado quando era o cache servindo o anterior.
+     Conteudo que muda com o codigo tem que ter o codigo na chave. */
+  fetch("/api/btc-ciclo?v=${VERSAO}").then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (d) {
+    if (d && d.grafico) { cicloVivo = d; desenhar(); }
+  }).catch(function () {});
+}
+
+var janelaDoBtc = "200d";
+var horasDoBtc = {};        // { "24": [pontos], "168": [pontos] }
+var horasBuscando = {};
+
+function pedirHoras(horas) {
+  var chave = String(horas);
+  if (horasDoBtc[chave] || horasBuscando[chave]) return;
+  horasBuscando[chave] = true;
+  fetch("/api/btc-horas?horas=" + horas + "&v=${VERSAO}").then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (d) {
+    horasBuscando[chave] = false;
+    if (d && d.pontos && d.pontos.length > 3) { horasDoBtc[chave] = d.pontos; desenhar(); }
+  }).catch(function () { horasBuscando[chave] = false; });
+}
+
+/* Os pontos por hora viram o mesmo formato que o grafico ja entende: preco, e
+   rotulos prontos pro eixo. Sem medias e sem faixa — elas sao contas de meses,
+   e desenha-las sobre 24 horas daria tres linhas retas sem significado. */
+function janelaPorHora(horas) {
+  var pontos = horasDoBtc[String(horas)];
+  if (!pontos || pontos.length < 4) return null;
+  var hora = function (t) {
+    var d = new Date(t * 1000);
+    return horas <= 48
+      ? d.getHours() + "h"
+      : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+          .replace(" de ", " ").replace(".", "");
+  };
+  var meio = pontos[Math.floor(pontos.length / 2)];
+  return {
+    preco: pontos.map(function (p) { return p.preco; }),
+    rotulos: [hora(pontos[0].t), hora(meio.t), "agora"],
+    /* Sem medias: o grafico desenha so o que existe, e a legenda diz por que. */
+    media50: null, media200: null, faixaBaixa: null, faixaAlta: null,
+    atrasDe: null, dias: null, porHora: true,
+  };
+}
+
 var btcVivo = null;      // { preco, variacao24h, quando }
 var btcBuscadoEm = 0;
 
@@ -1199,6 +1511,33 @@ function ligarRelogioDoBtc() {
     if (aba !== "hoje" || document.visibilityState === "hidden") { pararRelogioDoBtc(); return; }
     buscarBitcoin().then(function (mudou) { if (mudou && aba === "hoje") desenhar(); });
   }, 60000);
+}
+
+/* O CLIQUE NO SELETOR DE JANELA, no nivel de cima.
+ *
+ * ELE ESTAVA DENTRO DE ligarRelogioDoBtc, e nunca era registrado: aquela
+ * funcao tem duas saidas antecipadas antes do ponto onde eu tinha posto o
+ * ouvinte. Os tres botoes apareciam na tela, mudavam de cor no CSS, e clicar
+ * nao fazia nada. Peguei porque fui CLICAR pelo navegador em vez de conferir
+ * que o HTML tinha os botoes — o HTML estava certo e a tela estava morta.
+ *
+ * A LICAO: "o elemento esta no DOM" nao e a mesma pergunta que "ele funciona".
+ * Botao so esta pronto quando alguem clicou nele.
+ *
+ * Aqui em cima porque este trecho roda sempre, sem condicao — igual ao
+ * visibilitychange logo abaixo. E por delegacao porque o bloco inteiro e
+ * refeito a cada desenhar(): botao agarrado por id morre no proximo redesenho.
+ */
+if (typeof document !== "undefined") {
+  document.addEventListener("click", function (e) {
+    var b = e.target && e.target.closest && e.target.closest(".jbOp");
+    if (!b) return;
+    var nova = b.getAttribute("data-janela");
+    if (!nova || nova === janelaDoBtc) return;
+    janelaDoBtc = nova;
+    if (nova !== "200d") pedirHoras(nova === "24h" ? 24 : 168);
+    desenhar();
+  });
 }
 
 if (typeof document !== "undefined") {
@@ -1314,12 +1653,38 @@ function blocoDoBitcoin() {
     [1], function () {
       return '<div class="cartao btcCartao">' +
         celulas +
-        graficoDoBtc(serie, l.mediaHoje, 320, 96) +
+        seletorDaJanela() +
+        (function () {
+          var porHora = janelaDoBtc !== "200d";
+          var horas = janelaDoBtc === "24h" ? 24 : 168;
+          if (porHora) {
+            var jh = janelaPorHora(horas);
+            if (!jh) {
+              pedirHoras(horas);
+              return '<div class="grafEsperando">buscando o preço de hora em hora…</div>';
+            }
+            return graficoDoBtc(jh, jh.preco, null, precoDoBtcAgora(l), null, 720, 150);
+          }
+          /* O QUE CHEGOU AGORA GANHA DO QUE FOI GUARDADO, e a regra e a
+             mesma dos indicadores: o novo vale quando existe, o velho fica
+             quando o novo nao veio. Nunca o contrario. */
+          var gr = (cicloVivo && cicloVivo.grafico) || l.grafico;
+          var cz = (cicloVivo && cicloVivo.cruzamento) ||
+                   l.cruzamento || (l.confronto && l.confronto.cruzamento);
+          if (!gr) pedirCicloVivo();
+          return graficoDoBtc(gr, serie, l.mediaHoje, precoDoBtcAgora(l), cz, 720, 150);
+        })() +
         reguaDaFaixa(pos) +
         (pos ? '<div class="frase">' + esc(pos.texto) + '</div>' : "") +
         (variacao != null
-          ? '<div class="puxa">A janela inteira do gráfico são ' +
-            (pos ? pos.dias : serie.length) + ' dias, e nela o preço ' +
+          /* A FRASE DIZ RESPEITO A FAIXA DO CICLO, NAO AO GRAFICO.
+             Ela dizia "a janela inteira do GRAFICO sao N dias" — e virou
+             mentira no minuto em que o grafico ganhou tres janelas: quem
+             estava vendo 24 horas lia que estava vendo 260 dias. A medida e a
+             mesma de sempre (o pedaco que a leitura enxerga); so o nome dela
+             estava errado. */
+          ? '<div class="puxa">A faixa acima cobre os últimos ' +
+            (pos ? pos.dias : serie.length) + ' dias, e neles o preço ' +
             (variacao >= 0 ? "subiu " : "caiu ") + Math.abs(variacao).toFixed(0) + '%.</div>'
           : "") +
         carimbo +
@@ -1331,10 +1696,27 @@ function blocoDoBitcoin() {
 /* Os alvos de preço que ele guardou na própria conta.
  *
  * Ficam no Supabase, com RLS — então quem não entrou não vê nada, e é por isso
- * que esta parte é desenhada DEPOIS, quando a sessão existe. Aqui eles são só
- * mostrados com a distância até o alvo; disparar aviso no Telegram exigiria o
- * Worker ler a tabela pelos usuários, e isso pede um segredo que só o Rayakuza
- * pode pôr na Cloudflare. */
+ * que esta parte é desenhada DEPOIS, quando a sessão existe.
+ *
+ * ELES AVISAM NO TELEGRAM. Nem sempre foi assim, e a história vale ficar.
+ *
+ * Aqui morava este comentário: "disparar aviso no Telegram exigiria o Worker
+ * ler a tabela pelos usuários, e isso pede um segredo que só o Rayakuza pode pôr
+ * na Cloudflare". Era verdade quando foi escrito. O segredo chegou em
+ * 09/09/2026, junto com a cópia de segurança — e o comentário ficou aqui,
+ * descrevendo um impedimento que já não existia.
+ *
+ * Ele descobriu do jeito ruim: perguntou "o monitor BTC tá meio parado", e a
+ * resposta era que quatro alvos dele, dois postos naquela manhã, nunca tinham
+ * disparado e nunca iriam. Um deles estava a 1,7% do preço.
+ *
+ * A LIÇÃO: um comentário que diz "isto está bloqueado por X" é uma dívida com
+ * vencimento invisível. No dia em que X sai do caminho, ninguém volta pra ler
+ * o comentário — ele vira uma explicação convincente de um defeito.
+ *
+ * A TELA DIZ DE QUANTO EM QUANTO TEMPO. Três olhadas por dia não é vigilância
+ * contínua, e um alerta que deixa a pessoa achar que é vira o pior tipo de
+ * ferramenta: aquela em que se confia pra parar de olhar. */
 async function desenharAlertasBtc() {
   var alvo = document.getElementById("alertasBtc");
   if (!alvo || !sessao) return;
@@ -1353,11 +1735,35 @@ async function desenharAlertasBtc() {
         var distancia = (Number(a.alvo) / hoje - 1) * 100;
         var perto = Math.abs(distancia) <= 5;
         var bateu = a.direcao === "above" ? hoje >= a.alvo : hoje <= a.alvo;
-        return '<div class="alertaLinha' + (bateu ? " bateu" : perto ? " perto" : "") + '">' +
+
+        /* TRÊS ESTADOS, e eles são diferentes.
+         *
+         *   avisado   o Telegram já mandou, e a data prova
+         *   atingido  o preço passou o alvo, e o aviso sai na próxima rodada
+         *   distância ainda não chegou lá
+         *
+         * Juntar os dois primeiros num "atingido" só esconderia justamente a
+         * pergunta que ele vai fazer — "então por que não me avisou?" — cuja
+         * resposta é "ainda vai, na próxima olhada". */
+        var direito;
+        if (a.disparado_em) {
+          direito = "avisado " + new Date(a.disparado_em).toLocaleDateString("pt-BR");
+        } else if (bateu) {
+          direito = "atingido · aviso na próxima olhada";
+        } else {
+          direito = (distancia >= 0 ? "+" : "") + distancia.toFixed(1) + "% daqui";
+        }
+
+        return '<div class="alertaLinha' +
+            (a.disparado_em ? " avisado" : bateu ? " bateu" : perto ? " perto" : "") + '">' +
           '<span>' + (a.direcao === "above" ? "acima de " : "abaixo de ") + fmt(Number(a.alvo)) + '</span>' +
-          '<span>' + (bateu ? "atingido" : (distancia >= 0 ? "+" : "") + distancia.toFixed(1) + "% daqui") + '</span>' +
+          '<span>' + direito + '</span>' +
         '</div>';
-      }).join("") + '</div>';
+      }).join("") +
+      '<div class="alertaNota">Eu olho o preço <b>três vezes por dia</b> — 8h, meio-dia ' +
+        'e 18h — e aviso no Telegram. Entre uma olhada e outra o preço pode ir e ' +
+        'voltar sem eu ver. Cada alvo avisa uma vez só.</div>' +
+      '</div>';
   } catch (e) {}
 }
 
@@ -1608,7 +2014,32 @@ function blocoDaReguaDoCurso(c) {
   var l = c && c.leitura;
   var cur = l && l.curso;
   var ind = (l && l.indicadores) || {};
-  if (!cur || cur.fase === "sem-dado") return "";
+
+  /* O BLOCO SO SOME QUANDO NAO HA ABSOLUTAMENTE NADA A DIZER.
+   *
+   * Antes ele sumia inteiro quando os quatro indicadores on-chain falhavam —
+   * e eles falham direto, porque a fonte tem cota por IP e o IP e o
+   * compartilhado da Cloudflare. Resultado: a faixa de bull market e o
+   * cruzamento, que NAO dependem daquela fonte e estavam prontos, sumiam
+   * junto. Ele viu isso como "aparece praticamente nada".
+   *
+   * Uma condicao que fala por quatro coisas some com as outras duas. Agora
+   * cada pedaco decide sozinho se tem o que mostrar. */
+  /* O GUARDADO GANHA, O VIVO PREENCHE. Mesma ordem de sempre: a fonte de
+     referencia (que a rodada busca) vale mais que o substituto (que a tela
+     busca). O vivo entra quando o guardado nao tem nada — e ele DIZ que e
+     substituto, linha por linha. */
+  var veioDoSubstituto = false;
+  if ((!cur || cur.fase === "sem-dado") && cicloVivo && cicloVivo.curso &&
+      cicloVivo.curso.fase !== "sem-dado") {
+    cur = cicloVivo.curso;
+    ind = Object.assign({}, cicloVivo.indicadores || {}, { falhas: (ind && ind.falhas) || [] });
+    veioDoSubstituto = true;
+  }
+  var temCurso = cur && cur.fase !== "sem-dado";
+  var temEstrutura = (cicloVivo && (cicloVivo.faixaDeBull || cicloVivo.cruzamento)) ||
+                     (l && (l.faixaDeBull || l.cruzamento));
+  if (!temCurso && !temEstrutura) { pedirCicloVivo(); return ""; }
 
   var faixa = {
     fundo: { txt: "fundo", cor: "sobe" },
@@ -1617,20 +2048,29 @@ function blocoDaReguaDoCurso(c) {
     meio: { txt: "meio do caminho", cor: "" },
   };
 
-  var linhas = (cur.porque || []).map(function (t, i) {
+  var linhas = (temCurso ? (cur.porque || []) : []).map(function (t, i) {
     var chave = ["mvrv", "zscore", "puell", "vdd"][i];
     var d = ind[chave];
     return '<div class="indLinha">' +
       '<span class="ponto">·</span>' +
       '<span>' + esc(t) +
+        /* DUAS MARCAS, e elas dizem coisas diferentes.
+           "leitura de X" = o numero e de outro dia.
+           "fonte reserva" = o numero e de hoje, mas veio por outro caminho de
+           calculo. Medido, os dois caminhos ficam a menos de 3,5% um do outro
+           — so que perto de um corte do curso 3% decidem de que lado o
+           indicador cai, e quem le tem que poder saber disso. */
         (d && d.deAntes && d.dia
           ? ' <i class="indVelho">(leitura de ' + esc(d.dia) + ')</i>'
+          : "") +
+        (d && d.fonte === "coinmetrics"
+          ? ' <i class="indVelho">(fonte reserva)</i>'
           : "") +
       '</span>' +
     '</div>';
   }).join("");
 
-  var f = faixa[cur.fase] || faixa.meio;
+  var f = (temCurso && faixa[cur.fase]) || faixa.meio;
 
   /* A FAIXA DE BULL MARKET E A CRUZ, as duas linhas que faltavam.
    *
@@ -1648,8 +2088,11 @@ function blocoDaReguaDoCurso(c) {
     return "US$ " + Math.round(Number(v) || 0).toLocaleString("pt-BR");
   };
 
-  var bmsb = l.faixaDeBull || (l.confronto && l.confronto.faixaDeBull);
-  var cruz = l.cruzamento || (l.confronto && l.confronto.cruzamento);
+  var bmsb = (cicloVivo && cicloVivo.faixaDeBull) ||
+             l.faixaDeBull || (l.confronto && l.confronto.faixaDeBull);
+  var cruz = (cicloVivo && cicloVivo.cruzamento) ||
+             l.cruzamento || (l.confronto && l.confronto.cruzamento);
+  if (!bmsb) pedirCicloVivo();
 
   var linhaDaFaixa = bmsb
     ? '<div class="indLinha destaque">' +
@@ -1679,9 +2122,12 @@ function blocoDaReguaDoCurso(c) {
   return '<div class="cicloCurso">' +
     '<div class="cursoTopo">' +
       '<b>A régua do curso</b>' +
-      '<span class="cursoFase ' + f.cor + '">' + esc(f.txt) + '</span>' +
+      (temCurso ? '<span class="cursoFase ' + f.cor + '">' + esc(f.txt) + '</span>' : "") +
     '</div>' +
-    '<div class="cursoFirmeza">' + esc(cur.firmeza) + '</div>' +
+    (temCurso
+      ? '<div class="cursoFirmeza">' + esc(cur.firmeza) + '</div>'
+      : '<div class="cursoFirmeza">os quatro indicadores on-chain não chegaram hoje — ' +
+        'a fonte deles tem cota por hora. O que está abaixo sai do preço, e não depende dela.</div>') +
     linhas +
     linhaDaFaixa +
     linhaDaCruz +
@@ -1691,12 +2137,28 @@ function blocoDaReguaDoCurso(c) {
     (l.altseason && l.altseason.texto
       ? '<div class="indLinha"><span class="ponto">·</span><span>' + esc(l.altseason.texto) + '</span></div>'
       : "") +
-    (l.confronto && l.confronto.recado
+    /* O RECADO DO CONFRONTO SÓ VALE PRO CURSO QUE ELE COMPAROU.
+       Ele é escrito na rodada, contra o que a rodada conseguiu. Se a rodada
+       não conseguiu nada e a tela preencheu pelo substituto, o recado fica
+       falando de um vazio que não está mais na tela — e apareceu embaixo dos
+       indicadores dizendo "os indicadores do curso não foram lidos hoje".
+       Duas frases se contradizendo na mesma tela é pior que uma faltando. */
+    (l.confronto && l.confronto.recado && !veioDoSubstituto
       ? '<div class="cursoRecado' + (l.confronto.discordam ? " briga" : "") + '">' +
         esc(l.confronto.recado) + '</div>'
       : "") +
     rima +
-    ((ind.falhas && ind.falhas.length)
+    /* AS FALHAS, DITAS DE JEITO DIFERENTE conforme alguém as tenha coberto.
+       A lista crua ("mvrv: limite de chamadas da fonte · zscore: ...") logo
+       abaixo de três indicadores mostrados fazia a tela parecer quebrada
+       justamente quando ela tinha funcionado. A falha é real e continua dita —
+       muda o que ela SIGNIFICA pra quem lê. */
+    (veioDoSubstituto
+      ? '<div class="cursoNota">A fonte principal recusou hoje (ela limita por hora, ' +
+        'e o endereço de saída é compartilhado). Os três acima vieram da fonte reserva, ' +
+        'calculados de outro jeito — batem dentro de 3,5% e caem na mesma faixa. ' +
+        'O VDD não tem substituto e por isso não está aí.</div>'
+      : (ind.falhas && ind.falhas.length)
       ? '<div class="cursoNota">' + esc(ind.falhas.join(" · ")) + '</div>'
       : "") +
     '<div class="cursoNota">Indicadores e cortes do Portal 2 — Teoria dos Ciclos. ' +

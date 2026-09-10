@@ -17,6 +17,7 @@ import {
   redesAgora, stablesAgora, protocolosAgora,
   piscinasDeRendimento, taxasDosProtocolos, historicoDePrecos,
   precoDoBitcoin, estoqueGlobalDeStables, indicadoresDoCiclo,
+  precoPorHora,
   juntarIndicadores, razaoEthBtc,
 } from "./llama.js";
 import {
@@ -60,6 +61,7 @@ import {
 import { cotacaoDoDolar } from "./cambio.js";
 import { referenciaDoCiclo, quantosAtivos } from "./barca.js";
 import { cotarSimbolos, cotarMints, lerMovimento } from "./precos.js";
+import { completarIndicadores } from "./coinmetrics.js";
 import {
   entenderTermo, procurarPiscinas, deOndeVemORendimento,
 } from "./piscina-busca.js";
@@ -78,7 +80,7 @@ import {
 import { olharPosicao, avisoDeCegueira } from "./vigia-posicao.js";
 import {
   lerMvrv, lerZscore, lerPuell, lerVdd, lerMedia50, lerAltseason,
-  lerFaixaDeBull, lerCruzamento,
+  lerFaixaDeBull, lerCruzamento, seriesDoGrafico,
   vereditoDoCurso, juntarLeituras,
 } from "./indicadores.js";
 import {
@@ -90,6 +92,7 @@ import {
   tokensLancados, movimentosDeToken, carteirasSolana,
   tokensVistos, anotarTokensVistos, ladosDeToken, anotarLadosDeToken,
   retratoDaCarteira, donosComCarteira, copiasEnviadas, anotarCopiaEnviada,
+  alertasPendentes, anotarAlertaDisparado,
 } from "./supabase.js";
 import {
   contasEmLote, casasDosTokens, simboloDoMint,
@@ -224,10 +227,82 @@ async function medirOCiclo(env, dia) {
      * que sempre teve, e a tela diz que a régua do curso não foi lida. */
     let doCurso = null, confronto = null, indicadores = null, altseason = null;
     try {
-      const guardadoAntes = JSON.parse((await lerAjuste(env, "ciclo_leitura")) || "null");
-      const chegaram = await indicadoresDoCiclo();
-      indicadores = juntarIndicadores(chegaram, guardadoAntes?.indicadores || null);
-      indicadores.falhas = chegaram.falhas;
+      /* A MEMÓRIA DOS INDICADORES MORA SOZINHA, e isto conserta uma espiral.
+       *
+       * Antes, o "valor de antes" era lido de `ciclo_leitura` — que é
+       * SOBRESCRITO A CADA RODADA, inclusive nas que falharam inteiras. Então:
+       * uma rodada leva 429 nos quatro, grava `indicadores: { falhas: [...] }`
+       * sem valor nenhum, e a rodada seguinte não tem mais o que herdar. Uma
+       * falha apagava a memória da próxima, e a régua do curso sumia da tela
+       * pra sempre — até uma rodada conseguir os quatro de uma vez.
+       *
+       * Foi o que o Rayakuza viu: "as informações sobre o ciclo são insuficientes,
+       * vc tem tantos dados mas ali aparece praticamente nada". Não era a tela
+       * mostrando pouco: era o dado tendo sido apagado por uma falha antiga.
+       *
+       * `indicadores_bons` só recebe valor que EXISTE. Falha não escreve nada
+       * ali, então não há como uma falha piorar a memória. A LIÇÃO: cache que a
+       * falha sobrescreve não é cache, é uma bomba-relógio — ele funciona em
+       * todos os testes e some no primeiro dia ruim, que é justamente o dia em
+       * que ele fazia falta. */
+      const bonsAntes = JSON.parse((await lerAjuste(env, "indicadores_bons")) || "null");
+      const chegaram = await indicadoresDoCiclo(bonsAntes);
+
+      /* A FONTE RESERVA, só pro que a principal não trouxe.
+       *
+       * A principal (bitcoin-data.com) dá os quatro e é a referência. Ela
+       * limita por IP, e o IP é o compartilhado da Cloudflare — em 10/09/2026
+       * a régua passou o dia inteiro vazia com 429 nos quatro, e do computador
+       * dele os mesmos endereços respondiam 200. Não é a fonte fora do ar: é o
+       * nosso endereço no balde errado, e um Worker não escolhe IP de saída.
+       *
+       * A reserva cobre TRÊS dos quatro (MVRV, Z-Score e Puell) e diz que não
+       * cobre o VDD. Três de quatro com o quarto declarado ausente é honesto;
+       * três de quatro em silêncio seria a tela mentindo por omissão.
+       *
+       * A REFERÊNCIA GANHA SEMPRE que existe — por isso ela entra por cima no
+       * espalhamento abaixo. Medido no mesmo dia, os dois cálculos ficam a
+       * menos de 3,5% um do outro e caem na mesma faixa do curso; mas perto de
+       * um corte 3% decidem, então cada valor viaja com a marca da fonte. */
+      const faltando = ["mvrv", "zscore", "puell", "vdd"]
+        .filter((k) => !chegaram.valores[k]);
+      let reserva = { valores: {}, falhas: [], somas: null };
+      if (faltando.length) {
+        try {
+          const somasAntes = JSON.parse((await lerAjuste(env, "mercado_somas")) || "null");
+          reserva = await completarIndicadores(faltando, somasAntes);
+          if (reserva.somas && reserva.somas.n > 0) {
+            await guardarAjuste(env, "mercado_somas", JSON.stringify({
+              n: reserva.somas.n, media: reserva.somas.media,
+              m2: reserva.somas.m2, ate: reserva.somas.ate,
+            }));
+          }
+        } catch (e) {
+          reserva.falhas.push("fonte reserva: " + String(e?.message || e).slice(0, 60));
+        }
+      }
+
+      indicadores = juntarIndicadores(
+        { valores: { ...reserva.valores, ...chegaram.valores } },
+        bonsAntes || null,
+      );
+      indicadores.falhas = [...chegaram.falhas, ...reserva.falhas];
+      indicadores.pulados = chegaram.pulados;
+
+      /* Guarda de volta SÓ o que tem valor. Sem `deAntes`: quem lê depois é que
+         decide se aquilo é velho, comparando a data. */
+      const bons = {};
+      for (const [k, v] of Object.entries(indicadores)) {
+        /* A FONTE VAI JUNTO. Sem ela, a rodada seguinte não sabe se aquele
+           valor de hoje veio da referência ou do substituto — e trataria os
+           dois igual, congelando o radar no substituto pra sempre. */
+        if (v && Number.isFinite(v.valor)) {
+          bons[k] = { valor: v.valor, dia: v.dia || null, fonte: v.fonte || null };
+        }
+      }
+      if (Object.keys(bons).length) {
+        await guardarAjuste(env, "indicadores_bons", JSON.stringify(bons));
+      }
 
       const lidos = [
         lerMvrv(indicadores.mvrv?.valor),
@@ -288,6 +363,32 @@ async function medirOCiclo(env, dia) {
        * fonte que às vezes cai. */
       faixaDeBull: lerFaixaDeBull(precos),
       cruzamento: lerCruzamento(precos),
+      /* AS QUATRO LINHAS DO GRÁFICO, cada uma como série de verdade.
+       *
+       * Antes ia só `mediaHoje`, um número — e a tela desenhava com ele uma
+       * LINHA RETA chamada "média 200d". Medido em 10/09/2026 com o preço real:
+       * dentro da janela do gráfico, a média de 200 dias VARIA 43%, de 98.694
+       * a 69.939. A linha reta não era uma simplificação: era uma afirmação
+       * falsa sobre onde a média esteve, e quem olhasse concluiria datas
+       * erradas pra cada cruzamento.
+       *
+       * Ele viu antes de mim: "o eixo do ciclo é estagnado, parece uma foto".
+       *
+       * ~3 KB de JSON, arredondados pra inteiro — o preço do Bitcoin não tem
+       * centavo que importe num gráfico de 200 dias. */
+      grafico: (() => {
+        const g = seriesDoGrafico(precos, 100);
+        if (!g) return null;
+        const inteiros = (a) => a.map((v) => (v == null ? null : Math.round(v)));
+        return {
+          dias: g.dias, atrasDe: g.atrasDe,
+          preco: inteiros(g.preco),
+          media50: inteiros(g.media50),
+          media200: inteiros(g.media200),
+          faixaBaixa: inteiros(g.faixaBaixa),
+          faixaAlta: inteiros(g.faixaAlta),
+        };
+      })(),
     }));
     return leitura;
   } catch (erro) {
@@ -1661,6 +1762,113 @@ async function digitalDe(texto) {
  * quando ele abre o app, e este aqui grava quando ele esquece.
  *
  * NÃO MANDA SE NÃO MUDOU: compara a digital do conteúdo sem a data. */
+/* O VIGIA DOS ALVOS DE PREÇO DO BITCOIN.
+ *
+ * Ele pergunta, em 10/09/2026: "voce tem acesso ao monitor BTC ne? ele ta meio
+ * parado". Fui olhar. Ele tinha quatro alvos, dois postos naquela manhã, e
+ * TODOS com `disparado_em` vazio. Nunca dispararam — porque nada no Worker lia
+ * a tabela. A tela mostrava a distância até o alvo quando ele abria o painel,
+ * e era só isso.
+ *
+ * Um alvo estava a 1,7% do preço daquele momento.
+ *
+ * ------------------------------------------------------------------------
+ * O QUE ESTE VIGIA PROMETE, E O QUE ELE NÃO PROMETE
+ *
+ * Ele roda junto das rodadas: 08h, 12h e 18h de Brasília. Então ele vê o preço
+ * TRÊS VEZES POR DIA, e não a cada minuto.
+ *
+ * Isso quer dizer que um alvo pode ser cruzado e desfeito entre duas rodadas
+ * sem que ninguém veja — o Bitcoin furar 76 mil às 3 da manhã e voltar antes
+ * das 8. **A tela diz isso, com todas as letras.** Um alerta que se anuncia
+ * como vigilância e entrega três olhadas por dia é pior que alerta nenhum:
+ * quem confia nele para de olhar.
+ *
+ * Apertar isso é uma linha — acrescentar horas à lista de crons, que é de
+ * graça (a Cloudflare conta expressões, não disparos). Fica por escolha dele,
+ * não por limitação escondida.
+ *
+ * ------------------------------------------------------------------------
+ * DISPARA UMA VEZ SÓ
+ *
+ * `disparado_em` é gravado logo depois do aviso sair, e a consulta só traz os
+ * vazios. Alerta que repete é o jeito mais rápido de alguém aprender a ignorar
+ * os alertas — e aí o próximo, o que importava, passa batido também.
+ *
+ * NÃO DIZ O QUE FAZER. Diz que o número que ELE escolheu foi alcançado, e para
+ * por aí. O alvo é dele; a decisão também. */
+/* O preço do Bitcoin AGORA, pelo caminho barato.
+ *
+ * `precoDoBitcoin()` traz 400 dias porque a faixa de bull market precisa de 57
+ * semanas. Pra saber se um alvo bateu, isso é desperdício: o que importa é um
+ * número, o de agora. `cotarSimbolos` é a mesma rota que cota os tokens da
+ * carteira e que a tela já chama a cada minuto — leve, e com o D1 na frente. */
+async function btcAgora(env) {
+  try {
+    const r = await cotarSimbolos(["BTC"], env.BANCO);
+    const t = r?.tokens?.BTC;
+    return t && t.preco > 0 ? t.preco : null;
+  } catch { return null; }
+}
+
+async function vigiarAlertas(env, precoAgora, { seco = false } = {}) {
+  const nada = { olhou: false, pendentes: 0, bateram: 0, avisados: 0 };
+  if (!temChaveDeServico(env)) return { ...nada, motivo: "falta o segredo SUPABASE_SERVICE_KEY" };
+  if (!(precoAgora > 0)) return { ...nada, motivo: "não tenho o preço do Bitcoin agora" };
+
+  let lista;
+  try {
+    lista = await alertasPendentes(env);
+  } catch (e) {
+    return { ...nada, motivo: String(e?.message || e).slice(0, 120) };
+  }
+
+  const pendentes = lista || [];
+  /* `above` bate quando o preço ALCANÇA ou passa; `below`, quando cai até ou
+     abaixo. O igual entra nos dois: quem escreve 80.000 quer saber em 80.000,
+     não em 80.000,01. */
+  const bateram = pendentes.filter((a) =>
+    a.direcao === "above" ? precoAgora >= Number(a.alvo) : precoAgora <= Number(a.alvo));
+
+  const resultado = {
+    olhou: true, pendentes: pendentes.length, bateram: bateram.length,
+    avisados: 0, preco: Math.round(precoAgora),
+  };
+  if (!bateram.length || seco) return resultado;
+
+  const chat = await chatDoAviso(env);
+  if (!chat) return { ...resultado, motivo: "ainda não sei pra qual chat falar" };
+
+  const PARA = String.fromCharCode(10) + String.fromCharCode(10);
+  const dinheiro = (v) => "US$ " + Math.round(Number(v)).toLocaleString("pt-BR");
+
+  for (const a of bateram) {
+    const alvo = Number(a.alvo);
+    const texto =
+      "🎯 <b>Seu alvo foi alcançado</b>" + PARA +
+      "Você marcou <b>" + (a.direcao === "above" ? "acima de " : "abaixo de ") +
+      escapar(dinheiro(alvo)) + "</b>." + PARA +
+      "O Bitcoin está em <b>" + escapar(dinheiro(precoAgora)) + "</b>." + PARA +
+      "<i>Este alvo não avisa de novo. Eu olho o preço três vezes por dia — " +
+      "às 8h, meio-dia e 18h —, então entre uma olhada e outra o preço pode ir " +
+      "e voltar sem eu ver.</i>";
+
+    const foi = await falar(env, chat, texto);
+    if (!foi) continue;
+    try {
+      await anotarAlertaDisparado(env, a.id, new Date().toISOString());
+      resultado.avisados++;
+    } catch {
+      /* O aviso saiu e a marca não entrou: na próxima rodada ele recebe de
+         novo. Chato, e ainda assim melhor que o contrário — marcar sem avisar
+         apagaria um alvo que ele nunca soube que bateu. Entre repetir e
+         perder, repete. */
+      resultado.repetiraProxima = (resultado.repetiraProxima || 0) + 1;
+    }
+  }
+  return resultado;
+}
+
 async function mandarCopias(env) {
   if (!temChaveDeServico(env)) return 0;
   const chat = await chatDoAviso(env);
@@ -1765,6 +1973,20 @@ async function rodada(env, { soUrgente = false, semanal = false, seco = false, m
    * A LIÇÃO, e ela vale além daqui: a frequência certa de uma medida é a do que
    * está sendo medido, não a da ansiedade de quem olha. Quando o número muda
    * devagar, medir mais vezes só custa mais. */
+  /* OS ALVOS DE PREÇO, EM TODAS AS TRÊS RODADAS — e não só na das 8h.
+   *
+   * Tudo o mais aqui é medido uma vez por dia, e com razão: chão de pool,
+   * média de 200 dias, estoque de stablecoin, todos mudam devagar. Um ALVO DE
+   * PREÇO não é isso. Ele é uma pergunta de sim ou não sobre um número que
+   * anda o dia inteiro, e olhar uma vez por dia responderia errado quase
+   * sempre.
+   *
+   * Custa uma cotação (a rota barata, com o D1 na frente) e uma consulta ao
+   * Supabase. Quando não há alvo pendente, para na primeira e não fala nada. */
+  try {
+    await vigiarAlertas(env, await btcAgora(env));
+  } catch { /* um alvo não avisado é ruim; a rodada caída é pior */ }
+
   if (medir) {
     // Antes da qualidade porque é barato (2 chamadas contra 16 MB de download)
     // e porque o texto da manhã já quer o ciclo pronto.
@@ -2914,6 +3136,99 @@ export default {
       return Response.json(fora, { headers: { "cache-control": "public, max-age=600" } });
     }
 
+    /* O PRECO POR HORA, pro grafico de hoje e o da semana.
+     *
+     * GUARDADO POR 5 MINUTOS na borda. O preco de AGORA nao vem daqui — vem de
+     * /api/precos, que a tela ja chama a cada minuto. O que vem daqui e a
+     * FORMA das ultimas horas, e forma de 24 horas nao muda em 5 minutos.
+     *
+     * Sem esse cache, cada F5 do celular dele viraria uma chamada ao
+     * DefiLlama pra receber a mesma curva — o mesmo desperdicio que o radar
+     * inteiro evita guardando a leitura do dia.
+     *
+     * Nada aqui e dele: preco de Bitcoin e dado publico de mercado. */
+    /* AS SERIES DO CICLO, SEM DEPENDER DA RODADA.
+     *
+     * Isto existe por causa de uma frustracao legitima dele. As medias, a faixa
+     * de bull market e a cruz foram escritas, testadas e publicadas — e ele nao
+     * conseguia ver NENHUMA delas, porque a tela lia a leitura guardada e a
+     * rodada seguinte so viria horas depois. Eu respondi duas vezes "espera a
+     * rodada". Isso nao e resposta: e transferir pra ele o custo de uma escolha
+     * minha de arquitetura.
+     *
+     * A escolha errada foi acoplar DADO DE MERCADO ao relogio. Guardar a
+     * leitura do dia faz todo sentido pro que e caro (16 MB de pools) ou pro
+     * que tem cota (os indicadores on-chain, 10 chamadas por hora). O preco do
+     * Bitcoin nao e nenhum dos dois: sao 400 pontos, um pedido, e a borda
+     * guarda pra todo mundo.
+     *
+     * MEIA HORA DE CACHE na borda: as medias andam um dia por dia, entao meia
+     * hora e conservador. Uma pessoa abrindo o painel cem vezes gasta uma
+     * chamada; cem pessoas abrindo uma vez tambem.
+     *
+     * A rodada CONTINUA guardando tudo isso — o Telegram e o /saude leem de la,
+     * e a leitura guardada e a que tem data. Esta rota nao substitui aquela:
+     * ela tira a TELA da fila de espera. */
+    if (url.pathname === "/api/btc-ciclo") {
+      try {
+        const precos = await precoDoBitcoin();
+        const g = seriesDoGrafico(precos, 100);
+        const inteiros = (a) => a.map((v) => (v == null ? null : Math.round(v)));
+        return Response.json({
+          grafico: g && {
+            dias: g.dias, atrasDe: g.atrasDe,
+            preco: inteiros(g.preco), media50: inteiros(g.media50),
+            media200: inteiros(g.media200),
+            faixaBaixa: inteiros(g.faixaBaixa), faixaAlta: inteiros(g.faixaAlta),
+          },
+          faixaDeBull: lerFaixaDeBull(precos),
+          cruzamento: lerCruzamento(precos),
+          media50: lerMedia50(precos),
+          /* A REGUA DO CURSO VEM JUNTO, pela fonte reserva.
+           *
+           * Isto e a mesma licao de meia hora atras, aplicada de novo: os
+           * quatro indicadores on-chain so entravam na tela na rodada da
+           * manha, e a rodada da manha de hoje falhou nos quatro. Mandar ele
+           * esperar ate amanha nao e resposta.
+           *
+           * A reserva nao tem cota apertada, entao da pra pedir aqui — e a
+           * rota inteira fica guardada meia hora na borda, o que limita isto a
+           * no maximo 48 idas por dia, dividido por todo mundo que abrir.
+           *
+           * A LEITURA GUARDADA CONTINUA GANHANDO na tela, e a ordem esta la:
+           * a referencia e melhor que o substituto. Isto aqui e o chao, nao o
+           * teto. */
+          ...(await (async () => {
+            try {
+              const r = await completarIndicadores(["mvrv", "zscore", "puell"], null);
+              const v = r.valores;
+              const lidos = [
+                lerMvrv(v.mvrv?.valor), lerZscore(v.zscore?.valor),
+                lerPuell(v.puell?.valor), null,
+              ];
+              return { indicadores: v, curso: vereditoDoCurso(lidos), semSubstituto: r.falhas };
+            } catch { return {}; }
+          })()),
+        }, { headers: { "cache-control": "public, max-age=1800" } });
+      } catch (e) {
+        return Response.json({ erro: String(e?.message || e).slice(0, 120) },
+                             { headers: { "cache-control": "no-store" } });
+      }
+    }
+
+    if (url.pathname === "/api/btc-horas") {
+      const horas = Math.min(336, Math.max(6, Number(url.searchParams.get("horas")) || 24));
+      try {
+        const pontos = await precoPorHora(horas);
+        return Response.json({ horas, pontos }, {
+          headers: { "cache-control": "public, max-age=300" },
+        });
+      } catch (e) {
+        return Response.json({ erro: String(e?.message || e).slice(0, 120), pontos: [] },
+                             { headers: { "cache-control": "no-store" } });
+      }
+    }
+
     if (url.pathname === "/api/radar") {
       return Response.json(await montarRadar(env), {
         headers: { "cache-control": "public, max-age=300" },
@@ -2998,6 +3313,44 @@ export default {
      *    sem cota.
      *
      * Nada aqui é dele: preço de Bitcoin é dado público de mercado. */
+    /* A FONTE RESERVA ESTA DE PE? Olha de verdade e NAO GRAVA.
+     *
+     * Receita 6.6: codigo que so roda dentro do cron precisa de uma porta que
+     * o exercite de fora. Sem ela, um erro na reserva so apareceria na proxima
+     * vez que a fonte principal falhasse — ou seja, no pior momento possivel.
+     *
+     * ELA NAO TOCA A FONTE PRINCIPAL, de proposito. Aquela tem cota de 10
+     * chamadas por hora e o balde ja vive vazio; uma rota publica gastando
+     * dele derrubaria a rodada de verdade. A CoinMetrics nao tem cota apertada,
+     * entao e ela que esta rota exercita.
+     *
+     * Mostra tambem o que esta guardado, com a fonte de cada valor — que e a
+     * pergunta que se faz quando um numero na tela parece estranho.
+     *
+     * Publica, e nada dela e dele: indicador de ciclo do Bitcoin e dado de
+     * mercado, igual pra todo mundo. */
+    if (url.pathname === "/saude/indicadores") {
+      const fora = {};
+      try {
+        fora.guardados = JSON.parse((await lerAjuste(env, "indicadores_bons")) || "null");
+        const somas = JSON.parse((await lerAjuste(env, "mercado_somas")) || "null");
+        fora.somasDoMercado = somas
+          ? { dias: somas.n, ate: somas.ate }
+          : "ainda nao guardadas — a semente do codigo vale";
+        const r = await completarIndicadores(["mvrv", "zscore", "puell", "vdd"], somas);
+        fora.reserva = {};
+        for (const [k, v] of Object.entries(r.valores)) {
+          fora.reserva[k] = { valor: Number(v.valor.toFixed(4)), dia: v.dia };
+        }
+        fora.semSubstituto = r.falhas;
+        if (r.somas) fora.desvioSobre = r.somas.n + " dias, ate " + r.somas.ate;
+      } catch (e) {
+        fora.erro = String(e?.message || e).slice(0, 160);
+      }
+      fora.aviso = "esta rota OLHA e NAO GRAVA, e nao toca a fonte principal (cota de 10/hora)";
+      return Response.json(fora, { headers: { "cache-control": "no-store" } });
+    }
+
     if (url.pathname === "/saude/ciclo") {
       try {
         const precos = await precoDoBitcoin();
@@ -3031,6 +3384,29 @@ export default {
         return Response.json({ erro: String(e?.message || e).slice(0, 200) },
                              { headers: { "cache-control": "no-store" } });
       }
+    }
+
+    /* OS ALVOS DE PREÇO ESTÃO DE PÉ? Olha de verdade e NÃO AVISA.
+     *
+     * Receita 6.6 deste projeto, e desta vez ela tem nome e sobrenome: os
+     * alertas ficaram quebrados desde 28/08/2026 justamente porque não havia
+     * porta nenhuma que os exercitasse. Ninguém tinha como perguntar "isso
+     * funciona?" e receber uma resposta.
+     *
+     * `seco: true` é o que faz esta rota ser segura: ela conta quantos alvos
+     * bateriam agora e PARA. Se ela mandasse o aviso, conferir consumiria o
+     * alerta — e a rodada de verdade, minutos depois, não teria mais nada pra
+     * mandar. A conferência não pode gastar o que confere.
+     *
+     * Rota pública, então nada dele sai daqui: quantos alvos existem e quantos
+     * bateriam, sem os valores. Quanto alguém marcou em quanto já diz demais. */
+    if (url.pathname === "/saude/alertas") {
+      const preco = await btcAgora(env);
+      const r = await vigiarAlertas(env, preco, { seco: true });
+      return Response.json({
+        ...r,
+        aviso: "esta rota OLHA e NÃO AVISA — quem avisa é a rodada, três vezes por dia",
+      }, { headers: { "cache-control": "no-store" } });
     }
 
     if (url.pathname === "/saude/vigia") {
