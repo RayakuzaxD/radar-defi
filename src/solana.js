@@ -105,6 +105,112 @@ function juntarBytes(pedacos) {
  *
  * Conferido contra as duas posições reais do Rayakuza: a da Orca saiu no bump 253,
  * a da Kamino no 255. */
+/* ---------------------------------------------------------------------------
+ * O ENDERECO DERIVADO, DE VERDADE — e nao por tentativa.
+ *
+ * O QUE ESTAVA ERRADO, e ele achou olhando a tela: as taxas acumuladas da pool
+ * SOL/ETH apareciam como "nao entram nesta conta". A conta de taxas precisa
+ * dos dois arrays de tick, o do fundo e o do topo. O do fundo era encontrado;
+ * o do topo, nunca.
+ *
+ * A causa: `candidatosDeEndereco` gerava os enderecos de 5 bumps (255 a 251) e
+ * perguntava a cadeia qual existia. O array do topo daquela posicao mora no
+ * bump 248 — fora da janela.
+ *
+ * E ISSO NAO ERA SO UMA POSICAO. Na Solana o bump canonico desce de 255 ate
+ * achar um endereco que NAO caia na curva ed25519, e cada passo tem ~50%% de
+ * chance. Parar em 5 significa errar quando o bump e 250 ou menor:
+ *
+ *     (1/2)^5 = 3,1%%
+ *
+ * Tres por cento de TUDO que o radar deriva — arrays de tick, posicoes da Orca,
+ * obrigacoes da Kamino. Uma posicao inteira dele podia estar invisivel, e a
+ * tela diria "voce nao tem", que e diferente de "nao consegui perguntar".
+ *
+ * ---------------------------------------------------------------------------
+ * O CONSERTO NAO E TENTAR MAIS BUMPS
+ *
+ * Aumentar pra 30 reduziria a chance a 1e-9 e continuaria sendo chute — e
+ * multiplicaria por seis as consultas a cadeia.
+ *
+ * O certo e fazer o que a Solana faz: o bump canonico e o PRIMEIRO, descendo
+ * de 255, cujo hash NAO e um ponto valido da curva ed25519. Isso da UM
+ * endereco, sempre o certo, sem perguntar nada a rede.
+ *
+ * De quebra: 5 enderecos consultados viram 1. As leituras de posicao ficam
+ * cinco vezes mais baratas em chamadas de RPC.
+ *
+ * A conta da curva: um ponto comprimido de 32 bytes e o `y` em little-endian
+ * com o sinal de `x` no bit mais alto. Ele e valido se existe `x` com
+ *
+ *     -x^2 + y^2 = 1 + d*x^2*y^2   (mod 2^255 - 19)
+ *
+ * Conferido contra a realidade: as chaves publicas do System Program, do Token
+ * Program e do proprio programa da Orca dao "na curva"; e o bump que este
+ * codigo escolhe pros dois arrays de tick da posicao dele (255 e 248) e
+ * exatamente o que existe na cadeia.
+ * ------------------------------------------------------------------------- */
+
+const CURVA_P = (1n << 255n) - 19n;
+const CURVA_D = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
+const RAIZ_DE_MENOS_UM = 19681161376707505956807079304988542015446066515923890162744021073123829784752n;
+
+function potenciaMod(base, expoente, modulo) {
+  let r = 1n; base %= modulo;
+  while (expoente > 0n) {
+    if (expoente & 1n) r = (r * base) % modulo;
+    base = (base * base) % modulo;
+    expoente >>= 1n;
+  }
+  return r;
+}
+
+/* Estes 32 bytes sao um ponto valido da curva? Se sim, o endereco pertence a
+   uma chave privada e NAO pode ser um endereco derivado. */
+export function pontoDaCurva(bytes) {
+  let y = 0n;
+  for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(bytes[i]);
+  const sinal = (y >> 255n) & 1n;
+  y &= (1n << 255n) - 1n;
+  if (y >= CURVA_P) return false;
+
+  const y2 = (y * y) % CURVA_P;
+  const u = (y2 - 1n + CURVA_P) % CURVA_P;
+  const v = (CURVA_D * y2 + 1n) % CURVA_P;
+  const v3 = (v * v % CURVA_P) * v % CURVA_P;
+  const v7 = (v3 * v3 % CURVA_P) * v % CURVA_P;
+  let x = (u * v3 % CURVA_P) * potenciaMod(u * v7 % CURVA_P, (CURVA_P - 5n) / 8n, CURVA_P) % CURVA_P;
+
+  const confere = (x * x % CURVA_P) * v % CURVA_P;
+  if (confere !== u % CURVA_P) {
+    if (confere === (CURVA_P - u % CURVA_P) % CURVA_P) x = x * RAIZ_DE_MENOS_UM % CURVA_P;
+    else return false;
+  }
+  if (x === 0n && sinal === 1n) return false;
+  return true;
+}
+
+/* O endereco derivado. Um so, e o certo.
+ *
+ * Devolve null no caso em que nenhum bump serve — que existe na teoria e
+ * praticamente nunca acontece (seria preciso os 255 hashes caírem na curva).
+ * Null e "nao ha endereco pra estas sementes", diferente de "nao achei". */
+export async function enderecoDerivado(sementes, programa) {
+  const prog = deBase58(programa);
+  const marca = new TextEncoder().encode("ProgramDerivedAddress");
+  const base = juntarBytes(sementes);
+  for (let bump = 255; bump >= 0; bump--) {
+    const dados = juntarBytes([base, new Uint8Array([bump]), prog, marca]);
+    const h = new Uint8Array(await crypto.subtle.digest("SHA-256", dados));
+    if (!pontoDaCurva(h)) return { bump, endereco: paraBase58(h) };
+  }
+  return null;
+}
+
+/* A versao antiga, que gera N candidatos sem conferir a curva.
+ *
+ * FICA SO PRA COMPARACAO NOS TESTES. Quem chama de verdade usa
+ * `enderecoDerivado`, que da um endereco certo em vez de cinco chutes. */
 export async function candidatosDeEndereco(sementes, programa, quantos = 5) {
   const prog = deBase58(programa);
   const marca = new TextEncoder().encode("ProgramDerivedAddress");

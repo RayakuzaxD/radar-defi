@@ -6250,6 +6250,27 @@ function pendenteDaLinha(l) {
   return null;
 }
 
+/* A composicao da posicao, em porcentagem de dolar.
+ *
+ * "100%% em cbBTC" quando um lado sumiu; "62%% cbBTC / 38%% USDC" quando os
+ * dois existem. Sem as duas cotacoes, cai na quantidade crua — que e pior de
+ * ler, e ainda assim melhor que inventar uma proporcao. */
+function composicaoDaPosicao(pos) {
+  var a = pos.ladoAUsd, b = pos.ladoBUsd;
+  if (a == null || b == null || !(a + b > 0)) {
+    return numeroDeToken(Number(pos.qtdA.toFixed(6))) + " " + pos.simboloA +
+      " + " + numeroDeToken(Number(pos.qtdB.toFixed(2))) + " " + pos.simboloB;
+  }
+  var pa = (a / (a + b)) * 100;
+  /* Meio por cento de sobra nao e "os dois lados": e poeira de arredondamento
+     de uma posicao que atravessou a faixa inteira. Chamar isso de 99,6%% / 0,4%%
+     esconde o fato que importa, que e ter ido toda pra um lado. */
+  if (pa >= 99.5) return "tudo em " + esc(pos.simboloA);
+  if (pa <= 0.5) return "tudo em " + esc(pos.simboloB);
+  return pa.toFixed(0) + "% " + esc(pos.simboloA) + " · " +
+    (100 - pa).toFixed(0) + "% " + esc(pos.simboloB);
+}
+
 function ganhoDaPosicao(l) {
   var f = l.f;
   if (!f.posicao || l.convertido == null || l.emUSD == null) return "";
@@ -6321,11 +6342,21 @@ function ganhoDaPosicao(l) {
    * Então: primeiro o que ele ganhou de verdade, depois quanto isso dá hoje. */
   var t = pos && pos.taxas;
   if (t && (t.qtdA > 0 || t.qtdB > 0)) {
-    linhas += '<div class="lvAviso sobe">rendeu ' +
-      numeroDeToken(Number(t.qtdA.toFixed(9))) + " " + esc(pos.simboloA) + " + " +
-      numeroDeToken(Number(t.qtdB.toFixed(6))) + " " + esc(pos.simboloB) +
-      " em taxas, ainda não recolhidas · " + dinheiroMiudo(t.emDolar, "USD") +
-      " ao preço de agora</div>";
+    /* AS TAXAS SO EM DOLAR.
+     *
+     * Vinham em token primeiro — "rendeu 0,00000334 cbbt + 0,244741 USDC" —
+     * com o dolar depois. A razao era boa: o token e o numero exato e o dolar
+     * oscila. Mas ele decidiu o contrario, e o argumento e melhor: "no futuro
+     * isso vai se transformar tudo em dolar ou BTC, mas primeiro eles vao se
+     * tornar dolar, entao essa e a informacao mais importante".
+     *
+     * Ele tem razao sobre o que a tela e pra que serve: dois numeros de token
+     * com oito casas nao entram na cabeca de ninguem de bater o olho, e a
+     * pergunta que se faz olhando uma posicao e "quanto isso vale". */
+    if (t.emDolar != null) {
+      linhas += '<div class="lvAviso sobe">taxas acumuladas: ' +
+        dinheiroMiudo(t.emDolar, "USD") + "</div>";
+    }
   }
 
   /* A conta do que ele pos e do que ele tirou saiu daqui pra
@@ -6427,18 +6458,29 @@ function resultadoDoDinheiro(l) {
   var somenteRuido = Math.abs(r.ganho) < 0.005;
   var sobe = r.ganho >= 0;
 
+  /* ENTROU, AGORA, E A DIFERENÇA — nessa ordem, e tudo em dólar.
+   *
+   * Era assim: "-US$ 1,08 (-1.08%) sobre US$ 100,26 da entrada desde
+   * 2026-09-09". Ele pediu: "mostre o quanto entrei em dólar e quanto estou
+   * atualmente em dólar, e depois quando eu fechar quanto lucrei ou se saí no
+   * prejuízo".
+   *
+   * A diferença é de ordem de leitura. O formato antigo dava o RESULTADO
+   * primeiro e o custo depois, dentro de uma frase — pra saber quanto a
+   * posição vale hoje era preciso somar de cabeça. O novo põe os dois números
+   * que existem no mundo (o que saiu do bolso e o que está lá agora) e deixa a
+   * diferença por último, que é o que ela é: uma consequência dos dois. */
+  var entrouAgora = '<b>' + dinheiroMiudo(r.custo, "USD") + '</b> → <b>' +
+    dinheiroMiudo(r.valeHoje + (r.pendente || 0), "USD") + '</b>';
+
   if (somenteRuido) {
-    txt += '<div class="lvAviso">no zero a zero sobre ' + dinheiroMiudo(r.custo, "USD") +
-      (resumo.doValorDeEntrada ? " da entrada" : " que você pôs") +
-      (resumo.desde ? " desde " + esc(resumo.desde) : "") +
-      ' <span class="onde">(' + (sobe ? "+" : "") + dinheiroMiudo(r.ganho, "USD") + ")</span></div>";
+    txt += '<div class="lvAviso">' + entrouAgora + ' · no zero a zero' +
+      (resumo.desde ? " · desde " + esc(resumo.desde) : "") + "</div>";
   } else {
-    txt += '<div class="lvAviso ' + (sobe ? "sobe" : "desce") + '">' +
-      (sobe ? "+" : "") + dinheiroMiudo(r.ganho, "USD") +
-      (r.pct == null ? "" : " (" + (r.pct >= 0 ? "+" : "") + r.pct.toFixed(2) + "%)") +
-      " sobre " + dinheiroMiudo(r.custo, "USD") +
-      (resumo.doValorDeEntrada ? " da entrada" : " que você pôs") +
-      (resumo.desde ? " desde " + esc(resumo.desde) : "") + "</div>";
+    txt += '<div class="lvAviso ' + (sobe ? "sobe" : "desce") + '">' + entrouAgora +
+      ' · ' + (sobe ? "+" : "") + dinheiroMiudo(r.ganho, "USD") +
+      (r.pct == null ? "" : " (" + (r.pct >= 0 ? "+" : "") + r.pct.toFixed(1) + "%)") +
+      (resumo.desde ? " · desde " + esc(resumo.desde) : "") + "</div>";
   }
 
   /* AS TRES LINHAS QUE O MÉTODO SEPARA, quando a posição é uma pool.
@@ -6860,8 +6902,17 @@ function linhaVista(l, totalDaCaixa) {
        muda a cada negociacao — e e a informacao que a linha de valor sozinha
        esconde. */
     nome = f.fatia || (l.posicao.simboloA + "/" + l.posicao.simboloB);
-    sub = numeroDeToken(Number(l.posicao.qtdA.toFixed(6))) + " " + l.posicao.simboloA +
-      " + " + numeroDeToken(Number(l.posicao.qtdB.toFixed(2))) + " " + l.posicao.simboloB;
+    /* DE QUE LADO ELA ESTA, e nao quantos tokens tem dentro.
+     *
+     * Ele pediu assim: "mostre se esta tudo em cbBTC ou USDC, e ETH/SOL a
+     * mesma logica". Numa posicao concentrada essa e a pergunta — o preco
+     * andando empurra a posicao pra um lado, e sair pela borda de baixo
+     * significa estar 100%% no ativo que caiu.
+     *
+     * A quantidade crua nao responde isso de bater o olho: "0,00127 cbbt +
+     * 76,90 USDC" exige saber de cabeca quanto vale o cbBTC. A proporcao em
+     * dolar responde na hora. */
+    sub = composicaoDaPosicao(l.posicao);
     var lr = l.posicao.leitura;
     if (lr) {
       sinal = '<span class="lvVar ' + (lr.dentro ? (lr.perto ? "" : "sobe") : "desce") + '">' +

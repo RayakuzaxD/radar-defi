@@ -97,7 +97,7 @@ import {
 } from "./supabase.js";
 import {
   contasEmLote, casasDosTokens, simboloDoMint,
-  deBase58, candidatosDeEndereco, tokensDaCarteira, NOS,
+  deBase58, enderecoDerivado, tokensDaCarteira, NOS,
 } from "./solana.js";
 import {
   lerObrigacao, lerReserva, valorDoDeposito, cambioDaReserva,
@@ -1366,10 +1366,13 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
         if (!poolEmBytes) continue;
         for (const [qual, tick] of [["fundo", p.tickBaixo], ["topo", p.tickAlto]]) {
           const inicio = inicioDoTickArray(tick, w.tickSpacing);
-          for (const c of await candidatosDeEndereco(
-            sementesDoTickArray(poolEmBytes, inicio), PROGRAMA_ORCA, 5)) {
-            candidatosDeTick.push({ endereco: c.endereco, posicao: endereco, qual, inicio, tick });
-          }
+          /* UM endereco, o certo. Era uma lista de cinco chutes, e o array de
+             tick do topo da posicao SOL/ETH dele mora no bump 248 — fora da
+             janela. Sem ele, a conta de taxas nao fecha e a tela dizia "as
+             taxas ainda nao entram nesta conta". */
+          const c = await enderecoDerivado(
+            sementesDoTickArray(poolEmBytes, inicio), PROGRAMA_ORCA);
+          if (c) candidatosDeTick.push({ endereco: c.endereco, posicao: endereco, qual, inicio, tick });
         }
       }
 
@@ -1451,6 +1454,15 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
           /* Em que unidade o valor está. "USD" é o normal; qualquer outra coisa
              é a tela tendo que avisar, em vez de pôr cifrão em cima. */
           unidade,
+          /* CADA LADO EM DÓLAR, pra tela poder dizer DE QUE LADO a posição
+             está sem refazer a conta.
+             Ele pediu: "mostre se está tudo em cbBTC ou USDC, e ETH/SOL a
+             mesma lógica". É a pergunta certa numa posição concentrada: o
+             preço andando empurra tudo pra um lado, e a quantidade crua
+             (0,00127 cbbt + 76,90 USDC) não responde isso de bater o olho.
+             Nulo quando falta cotação de um dos dois — e nulo aqui vira
+             silêncio na tela, não um zero que mente. */
+          ladoAUsd: ladoA, ladoBUsd: ladoB,
           taxaPct: w.taxaPct,
           /* Mesma ideia do emprestimo: a liquidez da posicao so muda quando ele
              deposita ou retira. Preco andando e taxa acumulando nao mexem. */
@@ -2858,10 +2870,9 @@ export default {
         for (const n of nfts) {
           const mint = deBase58(n.mint);
           if (!mint) continue;
-          for (const c of await candidatosDeEndereco(
-            [new TextEncoder().encode("position"), mint], PROGRAMA_ORCA, 5)) {
-            candidatos.push({ endereco: c.endereco, mint: n.mint });
-          }
+          const c = await enderecoDerivado(
+            [new TextEncoder().encode("position"), mint], PROGRAMA_ORCA);
+          if (c) candidatos.push({ endereco: c.endereco, mint: n.mint });
         }
 
         /* ---- 2. EMPRÉSTIMOS DA KAMINO --------------------------------- */
@@ -2871,11 +2882,10 @@ export default {
         for (const m of MERCADOS) {
           const mercado = deBase58(m.id);
           if (!mercado || !dono) continue;
-          for (const c of await candidatosDeEndereco(
+          const c = await enderecoDerivado(
             [new Uint8Array([0]), new Uint8Array([0]), dono, mercado, zero, zero],
-            PROGRAMA_KAMINO, 3)) {
-            candidatosK.push({ endereco: c.endereco, mercado: m });
-          }
+            PROGRAMA_KAMINO);
+          if (c) candidatosK.push({ endereco: c.endereco, mercado: m });
         }
 
         // Uma ida só pros dois: são endereços, o programa dono é quem separa.
