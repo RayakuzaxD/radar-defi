@@ -90,6 +90,8 @@ export function paginaDoPainel() {
     font-weight: 700; }
   h1 .sinal { color: var(--sobe); text-shadow: var(--brilho) var(--sobe); }
   .sub { color: var(--fraco); font-size: 13px; margin-bottom: 16px; }
+  /* Vazia ela nao pode deixar buraco: a margem so existe quando ha texto. */
+  .sub:empty { margin: 0; display: none; }
   .aviso { background: var(--ruimBg); border: 1px solid var(--desce); color: var(--desce);
     padding: 10px 12px; border-radius: 9px; font-size: 13px; margin-bottom: 14px; }
   .instalar { display: none; width: 100%; margin-bottom: 14px; padding: 11px;
@@ -700,11 +702,37 @@ export function paginaDoPainel() {
   .legenda .fonte { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--linha);
     color: var(--fraco); font-style: italic; font-size: 12px; }
 
-  .abas { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
-  .abas button { font: inherit; font-size: 13px; padding: 8px 13px; border-radius: 999px;
-    border: 1px solid var(--linha); background: var(--papel); color: var(--texto); cursor: pointer; }
-  .abas button[aria-selected="true"] { background: var(--sobe); color: #04120c;
-    border-color: var(--sobe); font-weight: 650; box-shadow: var(--brilho) rgba(95,242,168,.35); }
+  /* AS ABAS, COMO BARRA SEGMENTADA.
+   *
+   * SEIS COLUNAS NO COMPUTADOR e tres no celular. O numero de colunas e a
+   * unica coisa que muda entre os dois — o botao e o mesmo, e por isso os dois
+   * tamanhos de tela nao viram dois desenhos pra manter.
+   *
+   * As bordas sao um TRUQUE DE GRADE: o fundo do container aparece pelo vao de
+   * 1px entre as celulas, o que da linhas divisorias sem nenhuma borda por
+   * botao — e sem o problema classico da borda dupla no encontro de dois.
+   *
+   * A aba escolhida NAO usa fundo verde cheio, e isso e decisao: com seis
+   * celulas encostadas, um bloco de cor forte no meio puxa o olho pra si e
+   * compete com os numeros logo abaixo, que sao o assunto. Um fio embaixo e o
+   * texto em verde bastam pra dizer onde se esta. */
+  .abas { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px;
+    background: var(--linha); border: 1px solid var(--linha); border-radius: 11px;
+    overflow: hidden; margin-bottom: 18px; }
+  .abas button { font: inherit; font-size: 12px; padding: 10px 4px; border: 0;
+    background: var(--papel); color: var(--fraco); cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    line-height: 1.2; }
+  .abIcone { font-size: 17px; line-height: 1; }
+  .abas button[aria-selected="true"] { background: var(--fundo2); color: var(--sobe);
+    font-weight: 700; box-shadow: inset 0 -2px 0 var(--sobe); }
+
+  @media (max-width: 560px) {
+    /* Tres por duas no celular: seis colunas em 375px deixariam cada nome com
+       menos de 60px, e "Carteira" nao cabe. */
+    .abas { grid-template-columns: repeat(3, 1fr); }
+    .abas button { font-size: 11.5px; padding: 11px 3px; }
+  }
 
   .grupo { margin-bottom: 26px; }
   .grupoTitulo { font-size: 13px; font-weight: 700; margin-bottom: 3px; display: flex;
@@ -857,13 +885,29 @@ export function paginaDoPainel() {
   <div id="alertas"></div>
   <div id="ciclo"></div>
 
+  <!-- BARRA SEGMENTADA: icone em cima, nome embaixo, tres por duas.
+       Escolha dele entre quatro maquetes que eu montei lado a lado, na largura
+       de celular e com as cores reais. As pilulas antigas tinham larguras
+       diferentes e quebravam sozinhas em tres fileiras desalinhadas, com a
+       ultima levando um botao so.
+
+       O NOME COMPLETO FICA NO aria-label, e nao so no visivel. "Grandes" e
+       "Pequenas" sozinhos sao ambiguos — grandes o que? Na tela o contexto
+       resolve (o conteudo tem titulo proprio), mas quem usa leitor de tela nao
+       tem esse contexto, e um botao chamado "Pequenas" nao diz nada a ele. -->
   <div class="abas" role="tablist">
-    <button role="tab" data-aba="hoje" aria-selected="true">🗺️ Hoje</button>
-    <button role="tab" data-aba="pools" aria-selected="false">💧 Pools</button>
-    <button role="tab" data-aba="grandes" aria-selected="false">🐋 Redes grandes</button>
-    <button role="tab" data-aba="pequenas" aria-selected="false">🌱 Pequenas e novas</button>
-    <button role="tab" data-aba="mudou" aria-selected="false">🔄 Mudou hoje</button>
-    <button role="tab" data-aba="carteira" aria-selected="false">💼 Carteira</button>
+    <button role="tab" data-aba="hoje" aria-selected="true" aria-label="Hoje">
+      <span class="abIcone">🗺️</span>Hoje</button>
+    <button role="tab" data-aba="pools" aria-selected="false" aria-label="Pools">
+      <span class="abIcone">💧</span>Pools</button>
+    <button role="tab" data-aba="grandes" aria-selected="false" aria-label="Redes grandes">
+      <span class="abIcone">🐋</span>Grandes</button>
+    <button role="tab" data-aba="pequenas" aria-selected="false" aria-label="Redes pequenas e novas">
+      <span class="abIcone">🌱</span>Pequenas</button>
+    <button role="tab" data-aba="mudou" aria-selected="false" aria-label="Mudou hoje">
+      <span class="abIcone">🔄</span>Mudou</button>
+    <button role="tab" data-aba="carteira" aria-selected="false" aria-label="Carteira">
+      <span class="abIcone">💼</span>Carteira</button>
   </div>
 
   <div id="conteudo"><div class="nada">carregando…</div></div>
@@ -8474,10 +8518,22 @@ const desencavar = () => { try { return JSON.parse(localStorage.getItem(COFRE) |
 fetch("/api/radar").then((r) => r.json()).then((d) => {
   dados = d; guardar(d);
   const t = d.totais || {};
-  document.getElementById("sub").textContent =
-    d.dia + " · " + (d.quantasPools || 0) + " pools classificadas · " +
-    (t.firme || 0) + " de taxas · " + (t.alugada || 0) + " de incentivo · " +
-    (t.loteria || 0) + " loterias · " + (t.nova || 0) + " novas";
+  /* O TOPO NAO CONTA ESTOQUE.
+   *
+   * Ele apontou: "aquelas informacoes la em cima acho desnecessarias, pools
+   * etc etc... so poluindo o radar". Estava escrito ali:
+   *
+   *     2026-09-10 · 198 pools classificadas · 16 de taxas · 0 de incentivo
+   *     · 166 loterias · 16 novas
+   *
+   * Duas coisas erradas de uma vez. A primeira: quantas pools existem em cada
+   * caixa e INVENTARIO, nao mercado — e inventario pertence a aba das pools,
+   * onde ele ja aparece, e nao ao cabecalho da pagina inteira. A segunda: a
+   * data estava repetida logo abaixo, em "Leitura de 2026-09-10".
+   *
+   * O padrao do dia inteiro, mais uma vez: numero na tela precisa mudar
+   * alguma coisa pra quem olha. "166 loterias" nao muda. */
+  document.getElementById("sub").textContent = "";
   if (d.fonteDeStablecoin && !d.fonteDeStablecoin.confiavel) {
     document.getElementById("alertas").innerHTML =
       '<div class="aviso"><b>Dado de stablecoin suspeito hoje</b> — ' + esc(d.fonteDeStablecoin.motivo) +
@@ -8497,6 +8553,10 @@ fetch("/api/radar").then((r) => r.json()).then((d) => {
     '<div class="aviso"><b>Sem internet.</b> Isto é o que eu sabia ' +
     (horas < 1 ? "há menos de uma hora" : "há cerca de " + horas + (horas === 1 ? " hora" : " horas")) +
     ' — o mercado já mudou desde então.</div>';
+  /* Aqui a frase FICA, e por um motivo: "leitura guardada" avisa que a tela
+     esta mostrando o que sobrou da ultima vez porque a busca falhou agora. Isso
+     muda o que ele conclui do que esta vendo — e e a diferenca entre um numero
+     velho anunciado e um numero velho disfarcado. */
   document.getElementById("sub").textContent = dados.dia + " · leitura guardada";
   desenhar();
 });
