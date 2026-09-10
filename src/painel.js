@@ -155,6 +155,12 @@ export function paginaDoPainel() {
 
   /* O Bitcoin: gráfico, régua da faixa e alvos de preço. */
   .btcCartao .numeros { margin-top: 0; }
+  .macroTopo { width: 100%; background: transparent; border: 0; padding: 0;
+               font: inherit; color: inherit; cursor: pointer; text-align: left;
+               display: flex; align-items: center; gap: 8px; }
+  .macroResumo { margin-left: auto; color: var(--fraco); font-size: 12px; }
+  .macroSeta { color: var(--fraco); font-size: 11px; }
+  .macroCorpo { margin-top: 8px; }
   .janelaBtc { display: flex; gap: 4px; margin: 8px 0 2px; }
   .jbOp { background: transparent; border: 1px solid var(--linha); color: var(--fraco);
           border-radius: 999px; padding: 3px 11px; font-size: 11px; cursor: pointer;
@@ -253,9 +259,10 @@ export function paginaDoPainel() {
     border: 1px solid var(--linha); background: var(--fundo2); color: var(--texto); cursor: pointer; }
 
   /* Uma linha em modo VER: texto, não formulário. */
-  .lv { display: grid; grid-template-columns: 1fr auto auto 34px; gap: 8px;
+  .lv { display: grid; grid-template-columns: auto 1fr auto auto 34px; gap: 8px;
     align-items: baseline; font-size: 13px; padding: 4px 0 4px 30px; }
   .lvNome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lvSub { font-size: 12px; }
   .lvValor { font-variant-numeric: tabular-nums; }
   .lvVar { font-size: 11.5px; font-variant-numeric: tabular-nums; }
   .lvPct { font-size: 11.5px; color: var(--fraco); text-align: right;
@@ -337,8 +344,12 @@ export function paginaDoPainel() {
     .lv { grid-template-columns: 1fr auto; padding-left: 22px; row-gap: 1px; }
     .lvNome { grid-column: 1; grid-row: 1; }
     .lvValor { grid-column: 2; grid-row: 1; text-align: right; }
-    .lvPct { grid-column: 1; grid-row: 2; text-align: left; }
-    .lvVar { grid-column: 2; grid-row: 2; text-align: right; font-size: 11px; }
+    /* A COMPOSICAO OCUPA A LINHA INTEIRA no celular. Ela e a unica informacao
+       aqui de tamanho imprevisivel ("tudo em SOL" ou "90% cbbt · 10% USDC"), e
+       dividir linha com o valor era o que a cortava. */
+    .lvSub { grid-column: 1 / -1; grid-row: 2; white-space: normal; }
+    .lvPct { grid-column: 1; grid-row: 3; text-align: left; }
+    .lvVar { grid-column: 2; grid-row: 3; text-align: right; font-size: 11px; }
     .lin { grid-template-columns: 1fr 88px auto; }
     .linCampos { grid-template-columns: 1fr; }
   }
@@ -1555,6 +1566,12 @@ function ligarRelogioDoBtc() {
  */
 if (typeof document !== "undefined") {
   document.addEventListener("click", function (e) {
+    /* A CAIXINHA DO MACRO, no mesmo ouvinte. Um listener de clique no
+       documento cobre os dois: o bloco inteiro e refeito a cada desenhar(),
+       entao botao agarrado por id morre no proximo redesenho. */
+    var enc = e.target && e.target.closest && e.target.closest("[data-encolhe]");
+    if (enc) { virarEncolhida(enc.getAttribute("data-encolhe")); desenhar(); return; }
+
     var b = e.target && e.target.closest && e.target.closest(".jbOp");
     if (!b) return;
     var nova = b.getAttribute("data-janela");
@@ -2088,16 +2105,50 @@ function blocoDoMacro() {
       : "";
   }
 
-  return '<div class="cicloCurso">' +
-    '<div class="cursoTopo"><b>O dinheiro do mundo</b>' +
-      (m.desemprego ? '<span class="cursoFase">desemprego ' +
-        esc(String(m.desemprego.valor).replace(".", ",")) + '%</span>' : "") +
-    '</div>' +
-    linhas.join("") +
-    (resumo ? '<div class="cursoRecado">' + esc(resumo) + '</div>' : "") +
+  /* CAIXINHA, FECHADA POR PADRAO — pedido dele, e o segundo do mesmo tipo.
+   *
+   * "Vi que o dinheiro do mundo fica poluindo muito a tela, entao ele precisa
+   * de uma aba para exibir/ocultar (...) em destaque mesmo so dados muito
+   * importantes, o resto fica oculto."
+   *
+   * A mesma decisao ja tinha sido tomada pras caixinhas da carteira, e o
+   * mecanismo e o mesmo ('encolhidas', guardado no navegador). Reusar em vez
+   * de inventar outro: duas maneiras de encolher coisa na mesma tela viram
+   * dois comportamentos diferentes no primeiro dia em que alguem mexe numa so.
+   *
+   * O QUE FICA VISIVEL FECHADO: inflacao e juros. Sao os dois numeros de que o
+   * resto do bloco deriva — a regra de Taylor sai da inflacao, a postura sai
+   * da comparacao dos dois, e o M2 e o balanco sao a consequencia da politica
+   * que esses dois descrevem. Se so cabe uma linha, e essa.
+   *
+   * O cabecalho e um BOTAO de verdade, e nao uma div com onclick: teclado e
+   * leitor de tela precisam saber que aquilo abre alguma coisa. */
+  var fechada = encolhida("macro");
+  var resumoCurto = "";
+  if (m.inflacao) {
+    var pi = m.inflacao.pce != null ? m.inflacao.pce : m.inflacao.cpi;
+    if (pi != null) resumoCurto = "inflação " + pi.toFixed(1).replace(".", ",") + "%";
+  }
+  if (m.postura) {
+    resumoCurto += (resumoCurto ? " · " : "") + "juros " +
+      m.postura.jurosHoje.toFixed(2).replace(".", ",") + "%";
+  }
 
-    /* O rodape explicativo saiu junto com os outros: de onde vem a serie e
-       como a conta e feita e documentacao, e documentacao mora no codigo. */
+  return '<div class="cicloCurso">' +
+    '<button type="button" class="cursoTopo macroTopo" data-encolhe="macro" ' +
+      'aria-expanded="' + (fechada ? "false" : "true") + '">' +
+      '<b>O dinheiro do mundo</b>' +
+      '<span class="macroResumo">' + esc(resumoCurto) + '</span>' +
+      '<span class="macroSeta">' + (fechada ? "▸" : "▾") + '</span>' +
+    '</button>' +
+    (fechada ? "" :
+      '<div class="macroCorpo">' +
+      (m.desemprego ? '<div class="cursoFirmeza">desemprego em ' +
+        esc(String(m.desemprego.valor).replace(".", ",")) + '%</div>' : "") +
+      linhas.join("") +
+      (resumo ? '<div class="cursoRecado">' + esc(resumo) + '</div>' : "") +
+      '</div>') +
+
   '</div>';
 }
 
@@ -2246,11 +2297,29 @@ function blocoDaReguaDoCurso(c) {
       esc(l.confronto.recadoDaFaixa.split(" · ").slice(1).join(" · ")) + '</div>'
     : "";
 
+  /* CAIXINHA TAMBEM AQUI, e pelo mesmo motivo do macro.
+   *
+   * Ele mandou o print do celular: "viu? ocupa a tela do celular toda". Sao
+   * sete linhas longas, e no telefone elas empurram tudo o mais pra fora da
+   * primeira tela.
+   *
+   * O QUE FICA VISIVEL FECHADO E A FASE — "meio do caminho", "topo", "fundo".
+   * Ela e o veredito dos sete: quem abre o radar quer saber onde esta antes de
+   * saber por que. O porque continua a um toque de distancia.
+   *
+   * Fechado por padrao, como o macro e como as caixinhas da carteira. Tres
+   * lugares, um mecanismo so — inventar um segundo jeito de encolher coisa na
+   * mesma tela e garantir que os dois divirjam no primeiro conserto. */
+  var encolhido = encolhida("indicadores");
+
   return '<div class="cicloCurso">' +
-    '<div class="cursoTopo">' +
+    '<button type="button" class="cursoTopo macroTopo" data-encolhe="indicadores" ' +
+      'aria-expanded="' + (encolhido ? "false" : "true") + '">' +
       '<b>Os indicadores do ciclo</b>' +
       (temCurso ? '<span class="cursoFase ' + f.cor + '">' + esc(f.txt) + '</span>' : "") +
-    '</div>' +
+      '<span class="macroSeta">' + (encolhido ? "\u25b8" : "\u25be") + '</span>' +
+    '</button>' +
+    (encolhido ? "" : '<div class="macroCorpo">' +
     /* SEM OS INDICADORES ON-CHAIN, O BLOCO SO MOSTRA O QUE TEM.
        Antes ele explicava a falha ("a fonte tem cota por hora"), e ele reparou:
        "isso e coisa tecnica de quem ta criando, nao de quem quer observar o
@@ -2285,6 +2354,7 @@ function blocoDaReguaDoCurso(c) {
         esc(l.confronto.recado) + '</div>'
       : "") +
     rima +
+    '</div>') +
   '</div>';
 }
 
@@ -6824,8 +6894,8 @@ function linhaFechadaVista(l) {
   var c = contaDoFechamento(movsDaLinha(f.chave));
 
   var corpo = '<div class="lv fechada">' +
-    '<span class="lvNome">' + esc(f.fatia || "posição") +
-      ' <span class="onde">fechada em ' + esc(f.fechada_em) + '</span></span>' +
+    '<span class="lvNome">' + esc(f.fatia || "posição") + '</span>' +
+    '<span class="lvSub onde">fechada em ' + esc(f.fechada_em) + '</span>' +
     '<span class="lvValor">—</span>' +
   "</div>";
 
@@ -6932,9 +7002,25 @@ function linhaVista(l, totalDaCaixa) {
     }
   }
 
+  /* A COMPOSICAO SAI DE DENTRO DO NOME.
+   *
+   * Ela morava dentro de .lvNome, que tem overflow escondido e reticencia —
+   * no computador cabia, no celular virava "90%% cbbt · 10%% …". Ele mandou o
+   * print: as posicoes que estao todas de um lado ("tudo em cbbt") apareciam
+   * inteiras, e justamente a que tem os DOIS lados, que e a que precisa da
+   * informacao, era a cortada.
+   *
+   * Agora ela e um elemento proprio. No computador continua ao lado do nome;
+   * no celular desce pra uma linha inteira, onde nao ha o que cortar.
+   *
+   * A licao de layout: texto de tamanho variavel nao pode dividir caixa com
+   * texto de tamanho fixo quando a caixa encolhe. O que varia perde sempre. */
   return '<div class="lv">' +
-    '<span class="lvNome">' + esc(nome) +
-      (sub ? ' <span class="onde">' + esc(sub) + '</span>' : "") + '</span>' +
+    '<span class="lvNome">' + esc(nome) + '</span>' +
+    /* SEMPRE presente, mesmo vazia: a grade tem cinco colunas fixas, e uma
+       linha sem composicao que emitisse quatro elementos jogaria o valor pra
+       coluna errada. Celula vazia nao aparece; celula ausente desalinha. */
+    '<span class="lvSub onde">' + (sub ? esc(sub) : "") + '</span>' +
     '<span class="lvValor">' + (l.convertido == null ? "—" : dinheiroNa(l.convertido, moedaVista)) + '</span>' +
     sinal +
     '<span class="lvPct">' + (dentro == null ? "" : dentro.toFixed(0) + "%") + '</span>' +
