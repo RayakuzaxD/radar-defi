@@ -385,7 +385,6 @@ async function anotarAvisos(env, achados, agora) {
 // ---------------------------------------------------------------------------
 // A rodada
 
-/* Busca o mercado. Três chamadas, sempre — é o orçamento que cabe no plano grátis. */
 /* O MODO ECONÔMICO — o radar cabendo no plano gratuito da Cloudflare.
  *
  * O grátis dá 10 MILISSEGUNDOS de processamento por rodada. Medido em
@@ -400,7 +399,7 @@ async function anotarAvisos(env, achados, agora) {
  *
  * Então no modo econômico a nuvem cuida do que é leve e constante (redes,
  * ciclo, carteira, vigia, avisos) e o COMPUTADOR de quem usa cuida do que é
- * pesado: `node medir-pools.js`, uma vez por dia, sem limite de processamento.
+ * pesado: node medir-pools.js, uma vez por dia, sem limite de processamento.
  *
  * É o mesmo padrão que o semear-pools.js já usava, e pelo mesmo motivo. */
 function modoEconomico(env) {
@@ -1779,14 +1778,15 @@ async function rodada(env, { soUrgente = false, semanal = false, seco = false, m
       }
     } catch { /* silêncio aqui vira "sem cotação", não vira rodada quebrada */ }
 
-    /* A QUALIDADE DAS REDES E AS POOLS — só quando NÃO estamos no modo
-       econômico. No grátis isto roda no computador de quem usa, por
-       `node medir-pools.js`: são 12 MB de download e milhares de escritas, e
-       nenhum dos dois cabe em 10 milissegundos.
+    /* A QUALIDADE DAS REDES E AS POOLS, dentro do mesmo interruptor do resto.
        Isto refaz cartaz, chão, pior dia e classe das ~3.800 pools: é a parte
        cara — 12 MB de download e milhares de escritas — e a que mais justifica
        ser diária. O chão é medido sobre 30 dias; ele não muda entre uma manhã
        e a próxima. */
+    /* A QUALIDADE DAS REDES E AS POOLS — só quando NÃO estamos no modo
+       econômico. No grátis isto roda no computador de quem usa, por
+       node medir-pools.js: são 12 MB de download e milhares de escritas, e
+       nenhum dos dois cabe em 10 milissegundos. */
     if (!modoEconomico(env)) try {
       await medirQualidade(env, retrato.dia, retrato.protocolos, new Map(
         retrato.fichas.map((f) => [f.rede, { tvl: f.tvl }]),
@@ -2707,10 +2707,19 @@ export default {
           achado.posicoes.push({
             endereco: x.endereco, onde: "Orca",
             simboloA: simboloDoMint(w.mintA), simboloB: simboloDoMint(w.mintB),
+            /* VALOR E UNIDADE ANDAM JUNTOS, aqui tambem.
+               A leitura normal ja declarava a unidade; esta, a da IMPORTACAO,
+               nao — e era o mesmo calculo. A tela pegava o numero, nao via
+               campo de unidade nenhum, e concluia que era dolar. Numero sem
+               unidade nao e meio certo: e errado com aparencia de certo. */
             valor: (function () {
               const a = cotacoesOrca[w.mintA], b = cotacoesOrca[w.mintB];
               if (a?.preco > 0 && b?.preco > 0) return q.qtdA * a.preco + q.qtdB * b.preco;
               return q.qtdA * q.preco + q.qtdB;
+            })(),
+            unidade: (function () {
+              const a = cotacoesOrca[w.mintA], b = cotacoesOrca[w.mintB];
+              return (a?.preco > 0 && b?.preco > 0) ? "USD" : (simboloDoMint(w.mintB) || "B");
             })(),
             faixa: { fundo, topo }, preco: q.preco,
             leitura: lerFaixaDaPosicao(q.preco, fundo, topo),

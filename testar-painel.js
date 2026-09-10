@@ -444,6 +444,40 @@ titulo("Nenhum botão é agarrado sem conferir se está na tela");
     soltos.join(", ") + " — some da tela em algum estado e derruba o resto junto");
 }
 
+/* ---------------------------------------------------------------------------
+ * A BASE DE ENTRADA SO SE CONGELA EM DOLAR
+ *
+ * Em 10/09/2026 a tela dele mostrou "+US$ 101,94 (+240756,87%)". O valor de
+ * hoje estava certo; a BASE, gravada no dia anterior pela conta que eu ja
+ * tinha consertado, estava em ETH — 0,042342 ETH lidos como se fossem dolares.
+ *
+ * Consertar a conta nao conserta o numero que ela ja gravou. Entao este teste
+ * guarda o unico caminho por onde uma base entra no banco: baseDeEntrada, que
+ * recusa qualquer leitura cuja unidade nao seja dolar.
+ * ------------------------------------------------------------------------- */
+titulo("A base de entrada so pode ser congelada em dolar");
+{
+  const fonte = readFileSync("src/painel.js", "utf8");
+  conferir("existe uma funcao unica que decide se da pra congelar a base",
+    fonte.includes("function baseDeEntrada(pos)"),
+    "sem ela, cada lugar decide sozinho e um deles esquece");
+
+  conferir("a guarda recusa unidade que nao seja USD",
+    /pos\.unidade\s*!==\s*"USD"/.test(fonte),
+    "a leitura DIZ em que unidade esta; nao adianta dizer se ninguem escuta");
+
+  /* Nenhuma gravacao de valor_entrada pode passar por fora da guarda. Este e o
+     teste que importa: o erro nao foi a falta de conta certa — foi um segundo
+     caminho de gravacao que nao passou por ela. */
+  const gravacoes = [...fonte.matchAll(/valor_entrada\s*[:=]\s*([^,;\n]+)/g)]
+    .map((m) => m[1].trim())
+    .filter((t) => /arred|Number\(|pos\.|lido\./.test(t));
+  const semGuarda = gravacoes.filter((t) => !/base/i.test(t));
+  conferir("toda gravacao de valor_entrada passa por baseDeEntrada",
+    semGuarda.length === 0,
+    semGuarda.join(" | ") + " — grava valor sem conferir a unidade");
+}
+
 console.log(SEPARADOR + "-".repeat(60));
 console.log(falhou === 0 ? `TUDO VERDE — ${passou} conferências` : `${falhou} FALHARAM (de ${passou + falhou})`);
 process.exit(falhou === 0 ? 0 : 1);

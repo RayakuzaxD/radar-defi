@@ -4560,7 +4560,12 @@ function importarEscolhidos() {
         fatia: x.simboloA + "/" + x.simboloB + " na " + x.onde,
         caixa: e.caixa, token: null, quantidade: null, valor: null, moeda: null,
         pool_id: null, onde: x.onde, posicao: x.endereco,
-        valor_entrada: arredFino(x.valor), data_entrada: hoje,
+        /* Pela guarda, igual ao caminho de colar o endereco a mao. Eram DOIS
+           caminhos de gravacao e eu so tinha consertado um — foi o teste que
+           achou o outro, nao eu. Caminho que grava sem passar pela guarda e
+           exatamente o jeito de o erro voltar depois de consertado. */
+        valor_entrada: baseDeEntrada(x) == null ? null : arredFino(baseDeEntrada(x)),
+        data_entrada: baseDeEntrada(x) == null ? null : hoje,
         mint: null, segue_carteira: true,
       });
     } else if (e.tipo === "emprestimo") {
@@ -4578,7 +4583,10 @@ function importarEscolhidos() {
         valor: null, moeda: null,
         pool_id: x.reserva, onde: x.onde + " · " + x.mercado,
         posicao: x.endereco,
-        valor_entrada: arredFino(x.valor), data_entrada: hoje,
+        /* Emprestimo sempre foi dolar (uma perna so, e ela tem cotacao), mas
+           passa pela mesma porta: guarda com excecao e guarda que se esquece. */
+        valor_entrada: baseDeEntrada(x) == null ? null : arredFino(baseDeEntrada(x)),
+        data_entrada: baseDeEntrada(x) == null ? null : hoje,
         cambio_entrada: x.cambio,
         mint: null, segue_carteira: true,
       });
@@ -4783,16 +4791,22 @@ function aplicarLancamento(l) {
     var apelido = String(l.nome || "").trim() ||
       (lido.simboloA + "/" + lido.simboloB + " na Orca");
     /* A foto da entrada, tirada AGORA. Sem ela nao ha de que subtrair depois, e
-       inventar uma base seria inventar o lucro dele. */
+       inventar uma base seria inventar o lucro dele — mas so em DOLAR, veja
+       baseDeEntrada. Base na unidade errada e pior que base nenhuma. */
+    var baseEmDolar = baseDeEntrada(lido);
     fatias.push({
       fatia: apelido, caixa: l.caixa, token: null, quantidade: null,
       valor: null, moeda: null, pool_id: null, onde: "Orca",
       posicao: endereco,
-      valor_entrada: arredFino(lido.valor),
-      data_entrada: new Date().toISOString().slice(0, 10),
+      valor_entrada: baseEmDolar == null ? null : arredFino(baseEmDolar),
+      data_entrada: baseEmDolar == null ? null : new Date().toISOString().slice(0, 10),
     });
     return {
-      texto: apelido + " ligada em " + onde + ": " + dinheiroNa(lido.valor, "USD") +
+      texto: apelido + " ligada em " + onde + ": " +
+        (baseEmDolar == null
+          ? "nao consegui ler o valor em dolar (falta o preco de " +
+            esc(lido.unidade || "um dos tokens") + "), entao nao gravei base de entrada"
+          : dinheiroNa(baseEmDolar, "USD")) +
         (lido.leitura ? ", " + lido.leitura.texto : "") + ".",
     };
   }
@@ -5267,6 +5281,40 @@ function resumoDosMovimentos(movs) {
  * primeiro aporte e a linha diz o que sempre disse. Trocar uma coisa que
  * sempre funcionou por uma melhor que as vezes nao aparece e piorar, mesmo
  * quando a conta nova esta certa. */
+/* A BASE DE ENTRADA SO PODE SER CONGELADA EM DOLAR.
+ *
+ * Esta funcao existe por causa de um erro que ficou GUARDADO, e por isso
+ * sobreviveu ao conserto do erro.
+ *
+ * Em 09/09 a pool SOL/ETH aparecia valendo US$ 0,04. A conta velha somava
+ * "quantidade de A vezes o preco da pool, mais a quantidade de B" — o que da o
+ * valor da posicao na moeda B. Com B = USDC isso e dolar; com B = ETH, o
+ * resultado sao 0,042342 ETH, e o rotulo "US$" era uma mentira de unidade.
+ *
+ * Consertei a conta no mesmo dia. Mas a foto da entrada ja tinha sido tirada
+ * COM A CONTA ERRADA e gravada no banco. No dia seguinte a tela mostrava
+ * "+US$ 101,94 (+240756,87%)": o valor de hoje, certo, em dolar, dividido por
+ * uma base que estava em ETH.
+ *
+ * A LICAO, e ela e maior que este arquivo: consertar a conta nao conserta o
+ * numero que ela ja gravou. Todo conserto de calculo pede a pergunta "isto ja
+ * escreveu alguma coisa que ficou?" — e um numero errado guardado e pior que
+ * um numero errado na tela, porque some do lugar onde a gente estava olhando.
+ *
+ * A defesa e nao aceitar numero sem unidade declarada. Quando a leitura diz
+ * que nao esta em dolar, a gente NAO guarda base nenhuma: uma posicao sem
+ * linha de resultado e um buraco visivel; uma base em unidade errada e um
+ * lucro de 240 mil por cento que parece um numero. */
+function baseDeEntrada(pos) {
+  if (!pos) return null;
+  var v = Number(pos.valor);
+  if (!(v > 0)) return null;
+  /* Sem o campo e o normal antigo (emprestimo, e toda leitura anterior a
+     este campo existir): esses sempre foram dolar. Com o campo, ele manda. */
+  if (pos.unidade != null && pos.unidade !== "USD") return null;
+  return v;
+}
+
 function resumoDaLinhaInteira(movs, valorEntrada, dataEntrada) {
   var resumo = resumoDosMovimentos(movs);
   if (resumo.total) return resumo;
@@ -5708,7 +5756,16 @@ function resultadoDoDinheiro(l) {
     if (doToken) return doToken;
   }
   var resumo = resumoDaLinhaInteira(movsDaLinha(f.chave), f.valor_entrada, f.data_entrada);
-  if (!resumo.total) return "";
+  if (!resumo.total) {
+    /* Buraco COM AVISO. Uma posicao ligada, sem lancamento e sem base, some da
+       conta de resultado sem explicar por que — e "sumiu" e o unico jeito de
+       um numero errar sem ninguem ver. */
+    if (f.posicao && !(Number(f.valor_entrada) > 0)) {
+      return '<div class="lvAviso miudo">sem base de entrada: lance o aporte ' +
+        "pra a conta de resultado aparecer</div>";
+    }
+    return "";
+  }
 
   var r = resultadoDaLinha(resumo, valeHojeEmDolar(l), pendenteDaLinha(l));
   if (!r) return "";
@@ -7442,8 +7499,13 @@ function ligarCarteira() {
       if (!f.posicao) return;
       var pos = posicaoDaLinha(f);
       if (pos && !(Number(f.valor_entrada) > 0)) {
-        f.valor_entrada = arred(pos.valor);
-        f.data_entrada = hoje;
+        /* So em dolar. Uma base em ETH gravada aqui viraria "+240756%" na tela
+           de amanha, e ninguem mais saberia de onde veio. */
+        var base = baseDeEntrada(pos);
+        if (base != null) {
+          f.valor_entrada = arred(base);
+          f.data_entrada = hoje;
+        }
       }
     });
 
