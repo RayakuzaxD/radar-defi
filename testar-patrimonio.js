@@ -23,6 +23,7 @@
 import {
   fluxoExterno, mexeNaQuantidade, quantidadeNaData, valorNaData,
   rendimentoDoPeriodo, lucroDesdeOComeco, JANELAS,
+  ehRemanejamento, fluxoDoPatrimonio,
 } from "./src/patrimonio.js";
 
 let passou = 0, falhou = 0;
@@ -356,6 +357,129 @@ titulo("AUMENTAR E RETIRAR DE POOL RENDE ZERO NO ATO");
   ]);
   conferir("e a retirada não aparece como prejuízo", perto(saque.lucro, 0),
     String(saque.lucro));
+}
+
+/* ------------------------------------------------------------------------ */
+titulo("FECHAR POOL NÃO É LUCRO — o caso que ele viu na tela");
+{
+  /* O print de 11/09/2026: "SOL/ETH na Orca +US$ 101,95" aparecendo como
+     GANHO de 1 mês. Ele escreveu a regra inteira em duas linhas:
+
+       "lançamento de pools estão somando como lucro, isso também é mentira.
+        Lucro é rendimento de tokens ou taxa de pool; o resto deveria ser
+        apenas aporte no total do patrimônio."
+
+     O mecanismo do erro: fechar a pool lançava um SAQUE, a conta lia "saiu
+     dinheiro do patrimônio" e compensava com lucro. O dinheiro não saiu de
+     lugar nenhum — virou SOL na carteira dele. */
+  const chavesDePosicao = new Set(["pool"]);
+  const saqueDeFechamento = {
+    chave: "pool", tipo: "saque", valor_usd: 100,
+    quando: "2026-09-11", qtd_a: 1, simbolo_a: "SOL",
+  };
+
+  conferir("o saque da pool É remanejamento",
+    ehRemanejamento(saqueDeFechamento, chavesDePosicao) === true);
+  conferir("e por isso NÃO conta como fluxo do patrimônio",
+    fluxoDoPatrimonio(saqueDeFechamento, chavesDePosicao) === 0);
+  conferir("mas continua sendo fluxo DA POSIÇÃO",
+    perto(fluxoExterno(saqueDeFechamento), -100));
+
+  /* Aporte na linha de um TOKEN é dinheiro novo de verdade: veio da corretora
+     e entrou no patrimônio. A distinção é a chave, não o tipo. */
+  const aporteDeFora = { chave: "usdc", tipo: "aporte", valor_usd: 500, quando: "2026-09-11" };
+  conferir("aporte em linha de token continua sendo dinheiro novo",
+    fluxoDoPatrimonio(aporteDeFora, chavesDePosicao) === 500);
+
+  /* A ASSIMETRIA, que é o ponto fino da regra: o APORTE em posição conta.
+   *
+   * Quem funda pool com dinheiro de dentro não lança nada — a linha de origem
+   * míngua sozinha, e a posição é devolvida ao passado pelo valor de entrada.
+   * Quem LANÇA um aporte está dizendo que o dinheiro veio de fora: a posição
+   * NÃO volta ao passado, e sem o fluxo esse dinheiro apareceria do nada como
+   * lucro. É a frase dele: "deve contar como novos aportes mas não como
+   * lucros". */
+  const aporteNaPool = {
+    chave: "pool", tipo: "aporte", valor_usd: 200, quando: "2026-09-11",
+  };
+  conferir("aporte EM posição conta como dinheiro novo",
+    fluxoDoPatrimonio(aporteNaPool, chavesDePosicao) === 200);
+  conferir("e não é remanejamento",
+    ehRemanejamento(aporteNaPool, chavesDePosicao) === false);
+
+  /* A prova de que a assimetria fecha: pool aberta com capital novo lançado,
+     numa janela que começa ANTES dela existir. */
+  const precoZ = () => 1;
+  const linhasZ = [{ chave: "pool", posicao: "PZ", valor_entrada: 200,
+    data_entrada: "2026-09-11" }];
+  const antesDela = valorNaData({ linhas: linhasZ, movimentos: [aporteNaPool],
+    precoEm: precoZ, cambioEm: () => null }, "2026-09-10");
+  const depoisDela = valorNaData({ linhas: linhasZ, movimentos: [aporteNaPool],
+    precoEm: precoZ, cambioEm: () => null }, "2026-09-11");
+  conferir("antes dela o dinheiro não estava na carteira (foi lançado de fora)",
+    perto(antesDela, 0), String(antesDela));
+  conferir("e a janela que a atravessa rende ZERO, não +200",
+    perto(rendimentoDoPeriodo([
+      { dia: "2026-09-10", valor: antesDela, fluxo: 0 },
+      { dia: "2026-09-11", valor: depoisDela,
+        fluxo: fluxoDoPatrimonio(aporteNaPool, chavesDePosicao) },
+    ]).lucro, 0));
+  conferir("e colheita não é fluxo em lugar nenhum",
+    fluxoDoPatrimonio({ chave: "pool", tipo: "colheita", valor_usd: 9 },
+      chavesDePosicao) === 0);
+
+  /* AGORA A CONTA INTEIRA, com as duas metades.
+     Ontem: pool aberta valendo 100, linha de SOL com 0 moedas.
+     Hoje:  pool fechada, 1 SOL na carteira a US$ 100. */
+  const precoEm = () => 100;
+  const cambioEm = () => null;
+  const linhas = [
+    { chave: "sol", token: "SOL", quantidade: 1 },
+    { chave: "pool", posicao: "P1", valor_entrada: 100,
+      data_entrada: "2026-09-09", fechada_em: "2026-09-11" },
+  ];
+  const movs = [saqueDeFechamento];
+  const ontem = valorNaData({ linhas, movimentos: movs, precoEm, cambioEm }, "2026-09-10");
+  const hoje = valorNaData({ linhas, movimentos: movs, precoEm, cambioEm }, "2026-09-11");
+
+  conferir("ontem: a pool valia 100 e a linha de SOL estava vazia",
+    perto(ontem, 100), String(ontem));
+  conferir("hoje: a pool sumiu e o SOL está na carteira, ainda 100",
+    perto(hoje, 100), String(hoje));
+
+  /* A SOMBRA É O QUE FAZ ISSO FECHAR. Sem ela, o SOL de hoje apareceria
+     também ontem, e o patrimônio de ontem seria 200: a pool e o SOL dela
+     contados duas vezes. */
+  const r = rendimentoDoPeriodo([
+    { dia: "2026-09-10", valor: ontem, fluxo: 0 },
+    { dia: "2026-09-11", valor: hoje,
+      fluxo: fluxoDoPatrimonio(saqueDeFechamento, chavesDePosicao) },
+  ]);
+  conferir("fechar a pool rende ZERO — não o valor do saque", perto(r.lucro, 0),
+    String(r.lucro));
+  conferir("e zero por cento", perto(r.pct, 0));
+
+  /* SEM A SOMBRA, o SOL de hoje apareceria também ontem: a pool valendo 100 E
+     o SOL dela valendo 100, o mesmo dinheiro contado duas vezes. É o teste que
+     prova que a sombra faz diferença, e não só que a conta fecha. */
+  const semSombra = valorNaData({
+    linhas, precoEm, cambioEm,
+    movimentos: [{ ...saqueDeFechamento, qtd_a: null, simbolo_a: null }],
+  }, "2026-09-10");
+  conferir("sem quantidade e símbolo no lançamento, o passado infla pra 200",
+    perto(semSombra, 200), String(semSombra));
+
+  /* A sombra maior que o saldo de hoje (ele fechou a pool e depois trocou o
+     SOL) dá quantidade negativa, e quantidade negativa é história incompleta:
+     null, e a janela some da tela. Some, mas não mente. */
+  const trocouDepois = valorNaData({
+    linhas: [{ chave: "sol", token: "SOL", quantidade: 0.1 },
+      { chave: "pool", posicao: "P1", valor_entrada: 100,
+        data_entrada: "2026-09-09", fechada_em: "2026-09-11" }],
+    movimentos: movs, precoEm, cambioEm,
+  }, "2026-09-10");
+  conferir("sombra maior que o saldo vira null, e não um número torto",
+    trocouDepois === null, String(trocouDepois));
 }
 
 /* ------------------------------------------------------------------------ */

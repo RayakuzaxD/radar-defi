@@ -89,6 +89,58 @@ export function fluxoExterno(m) {
   return 0; // colheita: lucro realizado, não dinheiro de fora
 }
 
+/* MOVIMENTO EM LINHA DE POSIÇÃO É REMANEJAMENTO, NÃO DINHEIRO DE FORA.
+ *
+ * Ele viu e disse a regra inteira em duas linhas:
+ *
+ *   "lançamento de pools estão somando como lucro, isso também é mentira.
+ *    Lucro é rendimento de tokens ou taxa de pool; o resto deveria ser apenas
+ *    aporte no total do patrimônio."
+ *
+ * Está certo, e o mecanismo do erro é este: fechar a pool lançava um SAQUE de
+ * US$ 101,95, a conta lia "saiu dinheiro do patrimônio" e compensava com
+ * lucro — +101,95 de ganho num dia em que nada rendeu. O dinheiro não saiu de
+ * lugar nenhum: virou SOL na carteira dele, dois centímetros ao lado na mesma
+ * tela.
+ *
+ * Fundar uma pool com USDC que já estava lá é o mesmo caso pelo avesso.
+ * Dinheiro que anda ENTRE as linhas dele não entra nem sai do patrimônio, e
+ * por isso não pode mexer no rendimento — nem pra cima nem pra baixo.
+ *
+ * Dinheiro NOVO continua sendo dinheiro novo: ele entra pela linha do token
+ * que chegou (o USDC que veio da corretora), e ali é aporte de verdade. */
+export function ehRemanejamento(m, chavesDePosicao) {
+  if (!m || !chavesDePosicao) return false;
+  const k = m.chave;
+  if (!k) return false;
+  const tem = typeof chavesDePosicao.has === "function"
+    ? chavesDePosicao.has(k)
+    : !!chavesDePosicao[k];
+
+  /* SÓ O SAQUE, e a assimetria é o ponto fino desta regra.
+   *
+   * SAQUE de posição: o dinheiro VOLTA pra carteira dele, e a linha de token
+   * cresce sozinha. Contar como saída faria a conta compensar com lucro — foi
+   * o "+US$ 101,95" que ele viu. Fluxo zero, e a sombra na linha de token
+   * cuida do resto.
+   *
+   * APORTE em posição: conta, e tem que contar. Quem funda pool com dinheiro
+   * de DENTRO não lança nada (a linha de origem míngua sozinha), e pra essa a
+   * posição é devolvida ao passado pelo valor de entrada. Quem LANÇA um aporte
+   * está dizendo que o dinheiro veio de fora — a posição não volta ao passado,
+   * e sem o fluxo o dinheiro apareceria do nada como lucro.
+   *
+   * É a frase dele, literal: "deve contar como novos aportes mas não como
+   * lucros". O aporte soma no total e rende zero; o saque não faz nem uma
+   * coisa nem outra. */
+  return tem && m.tipo === "saque";
+}
+
+/* O fluxo que conta pro patrimônio: o externo, sem o remanejamento. */
+export function fluxoDoPatrimonio(m, chavesDePosicao) {
+  return ehRemanejamento(m, chavesDePosicao) ? 0 : fluxoExterno(m);
+}
+
 /* O movimento mexe na QUANTIDADE de token? Aí a colheita conta.
  *
  * São perguntas diferentes e a resposta é diferente: a colheita não é dinheiro
@@ -179,6 +231,43 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
     porChave.get(k).push(m);
   }
 
+  /* AS MOEDAS QUE A POOL DEVOLVEU NÃO ESTAVAM NA LINHA DE TOKEN ANTES.
+   *
+   * Esta é a outra metade de "remanejamento não é lucro", e sem ela o erro só
+   * troca de sinal. A linha de SOL segue a carteira: quando a pool fecha e
+   * devolve 1,0266 SOL, a linha CRESCE sozinha, sem lançamento nenhum. Andando
+   * pra trás sem descontar, o SOL de hoje apareceria também no passado — e o
+   * patrimônio de ontem ficaria inflado pela pool E pelo SOL dela ao mesmo
+   * tempo, contando o mesmo dinheiro duas vezes.
+   *
+   * O lançamento da posição carrega a quantidade e o símbolo quando foi lido
+   * da cadeia (`qtd_a`/`simbolo_a`). Daí sai um movimento-sombra na linha do
+   * token, com o TIPO INVERTIDO: saque da pool = moedas entrando na linha;
+   * aporte na pool = moedas saindo dela.
+   *
+   * Sem quantidade e símbolo não há sombra a criar — e aí vale o
+   * comportamento antigo, que erra pra menos e não inventa. É mais uma razão
+   * pra ler a cadeia em vez de estimar. */
+  const chavesDePosicao = new Set(
+    linhas.filter((l) => l?.posicao && l?.chave).map((l) => l.chave));
+  const sombras = new Map();
+  for (const m of movimentos || []) {
+    if (!chavesDePosicao.has(m?.chave)) continue;
+    if (m.tipo !== "aporte" && m.tipo !== "saque") continue;
+    for (const [qtd, simbolo] of [[m.qtd_a, m.simbolo_a], [m.qtd_b, m.simbolo_b]]) {
+      const q = Number(qtd);
+      if (!Number.isFinite(q) || q <= 0 || !simbolo) continue;
+      const chave = String(simbolo).toUpperCase();
+      if (!sombras.has(chave)) sombras.set(chave, []);
+      sombras.get(chave).push({
+        quando: m.quando,
+        tipo: m.tipo === "saque" ? "aporte" : "saque",
+        valor_usd: 1, // só o sinal importa: a quantidade manda
+        qtd_a: q,
+      });
+    }
+  }
+
   let total = 0;
   for (const l of linhas) {
     const movs = porChave.get(l?.chave) || [];
@@ -206,6 +295,10 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
         }
         total += Math.max(0, comMexidas);
         continue;
+        /* `fluxoExterno` e não `fluxoDoPatrimonio` aqui de propósito: a
+           pergunta é quanto a POSIÇÃO valia, e pra ela o depósito entrou de
+           verdade. Se veio de dentro ou de fora é pergunta do PATRIMÔNIO, e
+           quem responde essa é a sombra na linha de token, logo acima. */
       }
 
       /* A POSIÇÃO AINDA NÃO EXISTIA — MAS O DINHEIRO DELA JÁ, e este é o
@@ -247,7 +340,9 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
     }
 
     if (l?.token != null && l?.quantidade != null) {
-      const q = quantidadeNaData(l.quantidade, movs, (d) => precoEm(l.token, d), corte);
+      const comSombras = movs.concat(
+        sombras.get(String(l.token).toUpperCase()) || []);
+      const q = quantidadeNaData(l.quantidade, comSombras, (d) => precoEm(l.token, d), corte);
       if (q == null) return null;
       const p = precoEm(l.token, corte);
       if (!(p > 0)) return null;

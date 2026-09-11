@@ -23,6 +23,7 @@ import {
 } from "./llama.js";
 import { tesourariasDeBitcoin, fluxoDasTesourarias } from "./tesouraria.js";
 import { fluxoDosEtfs, lerFluxoDosEtfs } from "./etf.js";
+import { mexidasDaPosicao, lancamentosDasMexidas } from "./mexida.js";
 import {
   regimeDePreco, fluxoDeCapital, idadeDoRegime, lerCiclo, cicloEfetivo,
   cicloParaMeta, posicaoNoCiclo, lerPosicao, reduzirSerie, mediaMovel, CICLO,
@@ -105,7 +106,7 @@ import {
 import {
   contasEmLote, casasDosTokens, simboloDoMint,
   deBase58, enderecoDerivado, tokensDaCarteira, NOS,
-  custoDeUmaColeta, prioridadeAgora, MINT_DO_SOL,
+  custoDeUmaColeta, prioridadeAgora, MINT_DO_SOL, pedir,
 } from "./solana.js";
 import {
   lerObrigacao, lerReserva, valorDoDeposito, cambioDaReserva,
@@ -2820,6 +2821,79 @@ export default {
      * POST e não GET pelo mesmo motivo de /api/precos: a lista de símbolos É a
      * composição da carteira dele, e composição de carteira não vai em URL,
      * que fica em log de servidor e em histórico de navegador. */
+    /* AS MEXIDAS DE UMA POSICAO, lidas da cadeia.
+     *
+     * Existe porque a estimativa por regra de tres serve pra PERGUNTAR e nao
+     * pra REGISTRAR: um fechamento estimado lancou US$ 0,04 onde voltaram
+     * US$ 101,95, e a carteira dele ficou vermelha por causa disso.
+     *
+     * Fechar posicao e REMANEJAMENTO, nao resultado — o dinheiro sai da pool e
+     * entra na carteira no mesmo instante, pelo mesmo valor. Entao o numero
+     * tem que ser o do instante, e quem sabe o do instante e a cadeia.
+     *
+     * O ENDERECO DA CARTEIRA VEM DO NAVEGADOR DELE, como em /api/carteira: e
+     * endereco publico, nao chave, e sem ele nao da pra separar o que e dele
+     * do que e cofre. Por POST pelo mesmo motivo das outras: endereco de
+     * carteira nao vai em URL, que fica em log.
+     *
+     * UMA POSICAO POR CHAMADA. Sao ate 13 subrequisicoes cada (as assinaturas
+     * mais uma por transacao), e oito posicoes de uma vez estourariam o
+     * orcamento do Worker. Quem chama pede a que ele esta olhando. */
+    if (url.pathname === "/api/mexidas" && pedido.method === "POST") {
+      let corpo = null;
+      try { corpo = await pedido.json(); } catch { corpo = null; }
+      const posicao = String(corpo?.posicao || "").trim();
+      const dono = String(corpo?.dono || "").trim();
+      if (!pareceEnderecoSolana(posicao) || !pareceEnderecoSolana(dono)) {
+        return Response.json({ erro: "preciso do endereco da posicao e da carteira" },
+          { status: 400 });
+      }
+
+      const nos = env.SOLANA_RPC ? [env.SOLANA_RPC, ...NOS] : NOS;
+      const lido = await mexidasDaPosicao(posicao, dono,
+        (m, p) => pedir(m, p, nos), { quantas: 12 }).catch(() => null);
+      if (!lido) return Response.json({ erro: "nao consegui ler a cadeia agora" });
+
+      /* O PRECO DO INSTANTE de cada token que se mexeu. Uma chamada por
+         instante distinto — as mexidas de uma posicao sao poucas, e os
+         segundos se repetem quando ela colhe e fecha na mesma leva. */
+      const precos = {};
+      for (const m of lido.mexidas) {
+        for (const mint of Object.keys(m.tokens)) {
+          const chave = mint + "@" + m.quando;
+          if (chave in precos) continue;
+          precos[chave] = null;
+          try {
+            const r = await fetch(
+              `https://coins.llama.fi/prices/historical/${m.quando}/solana:${mint}?searchWidth=1h`,
+              { headers: { accept: "application/json" } },
+            );
+            if (!r.ok) continue;
+            const j = await r.json();
+            const p = Number(j?.coins?.["solana:" + mint]?.price);
+            if (p > 0) precos[chave] = p;
+          } catch { /* preco que nao veio vira conta incompleta, nao erro */ }
+        }
+      }
+      const precoEm = (mint, quando) => precos[mint + "@" + quando];
+
+      return Response.json({
+        mexidas: lido.mexidas.map((m) => ({
+          ...m, valorUsd: (() => {
+            let t = 0;
+            for (const [mint, qtd] of Object.entries(m.tokens)) {
+              const p = precoEm(mint, m.quando);
+              if (!(p > 0)) return null;
+              t += qtd * p;
+            }
+            return t;
+          })(),
+        })),
+        lancamentos: lancamentosDasMexidas(lido.mexidas, precoEm),
+        faltaram: lido.faltaram.length,
+      }, { headers: { "cache-control": "no-store" } });
+    }
+
     if (url.pathname === "/api/historico" && pedido.method === "POST") {
       let corpo = null;
       try { corpo = await pedido.json(); } catch { corpo = null; }

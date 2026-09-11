@@ -378,7 +378,10 @@ function deBase64(texto) {
   return fora;
 }
 
-async function pedir(metodo, params, nos = NOS) {
+/* Exportado pra quem precisa falar com o no por fora deste arquivo (a leitura
+   de mexida na posicao, por exemplo) sem refazer a rodada de nos, o cabecalho
+   de identificacao e a queda pro proximo quando um recusa. */
+export async function pedir(metodo, params, nos = NOS) {
   let ultimoErro = null;
   for (const no of nos) {
     try {
