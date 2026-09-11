@@ -511,6 +511,8 @@ export function paginaDoPainel() {
   .fatoNota { color: var(--fraco); font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
   /* O bloco do dinheiro DELE, destacado do bloco do mercado: são duas coisas
      diferentes na mesma caixa, e o olho precisa saber onde uma acaba. */
+  .vvLinha b { font-size: 15px; }
+  .cxLucro { margin-top: 1px; }
   .patTotal { font-size: 24px; font-weight: 750; letter-spacing: .01em;
     font-variant-numeric: tabular-nums; margin: 2px 0 6px; }
   .impMeio { font-size: 12px; font-weight: 650; text-transform: uppercase;
@@ -3296,7 +3298,7 @@ function pedirSeriesDePrecos() {
 }
 
 /* O preco mais proximo pra tras. Fim de semana nao existe pra cambio, e o
-   ponto de hoje pode ainda nao ter fechado — ate a folga dada de tolerancia
+   ponto de hoje pode ainda nao ter fechado — a folga dada de tolerancia
    antes de desistir. */
 function pertoDoDia(porDia, dia, folga) {
   if (porDia[dia] != null) return porDia[dia];
@@ -3309,14 +3311,153 @@ function pertoDoDia(porDia, dia, folga) {
   return null;
 }
 
+function precoEm(token, dia) {
+  if (!serieDePrecos) return null;
+  var s = serieDePrecos[String(token || "").toUpperCase()];
+  return (s && s.porDia) ? pertoDoDia(s.porDia, dia, 5) : null;
+}
+
+function cambioEm(dia) {
+  if (!serieDePrecos) return null;
+  var s = serieDePrecos.BRL;
+  if (!s || !s.porDia) return null;
+  var v = pertoDoDia(s.porDia, dia, 7);
+  if (v != null) return v;
+  /* Antes do comeco da serie de cambio (a fonte so tem real desde nov/2025)
+     vale o mais antigo conhecido. Derrubar a janela de um ano inteira por
+     causa do cambio da reserva — a parte PARADA da carteira — seria jogar
+     fora o muito pelo pouco. */
+  return (s.de && dia < s.de) ? s.porDia[s.de] : null;
+}
+
+/* ---------------------------------------------------------------------------
+ * O VERDE OU VERMELHO DE CADA LINHA, DESDE O COMECO.
+ *
+ * A regra dele, aplicada linha a linha: o rendimento inicia da data do
+ * lancamento. O que nao tem lancamento entra PELO VALOR DE HOJE e rende zero
+ * ate ter historia — a conta nunca fabrica verde, so pode estar subestimada.
+ *
+ *   linha de token     lucro = valor hoje − (aportes − saques) − parte sem
+ *                      historia (medida pela reconstrucao: a quantidade na
+ *                      vespera do primeiro lancamento)
+ *   posicao aberta     lucro = valor vivo − entrada. A entrada descoberta
+ *                      (sem aporte lancado) conta como custo — capital novo
+ *                      posto direto na pool rende zero ate ser lancado.
+ *   valor digitado     sem lancamento, rende zero: e a reserva parada.
+ *
+ * Devolve null quando faltou preco pra medir — e null vira silencio, nunca
+ * numero errado. */
+function lucroDaLinha(l) {
+  if (!serieDePrecos || !l || !l.f) return null;
+  var movsDaqui = (l.f.chave && movimentos[l.f.chave]) || [];
+
+  var custoLancado = 0;
+  movsDaqui.forEach(function (m) { custoLancado += fluxoExterno(m); });
+
+  if (l.f.posicao) {
+    if (linhaFechada(l.f)) return { lucro: 0, semHistoria: 0, custo: 0 };
+    if (l.emUSD == null || !isFinite(l.emUSD)) return null;
+    var entrada = Number(l.f.valor_entrada);
+    if (!isFinite(entrada)) return null;
+    var descoberta = Math.max(0, entrada - Math.max(0, custoLancado));
+    /* O lucro da posicao e o vivo acima da entrada — o que ELA rendeu. A
+       entrada em si ou veio de dentro (custo ja nas linhas de origem) ou e
+       capital novo sem lancamento (a parte descoberta, custo aqui). */
+    return { lucro: l.emUSD - entrada, semHistoria: descoberta, custo: entrada };
+  }
+
+  if (l.f.token && l.f.quantidade != null) {
+    if (l.emUSD == null || !isFinite(l.emUSD)) return null;
+    var qtd = Number(l.f.quantidade);
+    if (!(qtd > 0)) return { lucro: 0, semHistoria: 0, custo: 0 };
+    if (!movsDaqui.length) return { lucro: 0, semHistoria: l.emUSD, custo: l.emUSD };
+
+    var primeiro = null;
+    movsDaqui.forEach(function (m) {
+      var d = String(m.quando || "").slice(0, 10);
+      if (d && (!primeiro || d < primeiro)) primeiro = d;
+    });
+    var vespera = new Date(Date.parse(primeiro + "T00:00:00Z") - 86400000)
+      .toISOString().slice(0, 10);
+    var resto = quantidadeNaData(qtd, movsDaqui, function (d) {
+      return precoEm(l.f.token, d);
+    }, vespera);
+    if (resto == null) {
+      /* Null tem duas causas com respostas opostas: faltou preco de um dia
+         (nao da pra medir) ou os lancamentos explicam MAIS moeda do que
+         existe hoje — que nao e erro, e a linha que financiou uma pool: o
+         custo continua nos aportes dela, o valor esta na pool. */
+      var precosOk = true;
+      movsDaqui.forEach(function (m) {
+        var qm = Number(m.qtd_a);
+        if (isFinite(qm) && qm > 0) return;
+        var d = String(m.quando || "").slice(0, 10);
+        if (d > vespera && mexeNaQuantidade(m) && !(precoEm(l.f.token, d) > 0)) precosOk = false;
+      });
+      if (!precosOk) return null;
+      return { lucro: l.emUSD - custoLancado, semHistoria: 0,
+        custo: Math.max(0, custoLancado) };
+    }
+    var semHist = resto > qtd * 0.001 ? l.emUSD * (resto / qtd) : 0;
+    return { lucro: l.emUSD - custoLancado - semHist, semHistoria: semHist,
+      custo: Math.max(0, custoLancado) + semHist };
+  }
+
+  /* Valor digitado (a reserva): sem historia de rendimento, rende zero. */
+  if (l.convertido != null && isFinite(l.convertido)) {
+    var emDolar = converterV(l.convertido, moedaVista, "USD", cotacao());
+    if (emDolar == null) return null;
+    if (custoLancado > 0) return { lucro: emDolar - custoLancado, semHistoria: 0, custo: custoLancado };
+    return { lucro: 0, semHistoria: emDolar, custo: emDolar };
+  }
+  return { lucro: 0, semHistoria: 0, custo: 0 };
+}
+
+/* A soma: por caixinha e no total, com o verde e o vermelho separados —
+   "quanto estou positivo e quanto fiquei negativo". */
+function contaVerdeVermelho(c) {
+  if (!serieDePrecos || !c) return null;
+  var fora = { total: 0, custo: 0, positivo: 0, negativo: 0, semHistoria: 0, porCaixa: {}, incompleta: false };
+  (c.linhas || []).forEach(function (l) {
+    var r = lucroDaLinha(l);
+    if (r == null) {
+      if (l.f && (l.emUSD != null || l.convertido != null)) fora.incompleta = true;
+      return;
+    }
+    fora.total += r.lucro;
+    fora.custo += r.custo;
+    fora.semHistoria += r.semHistoria;
+    if (r.lucro > 0) fora.positivo += r.lucro; else fora.negativo += -r.lucro;
+    var k = (l.f && l.f.caixa) || "sem";
+    if (!fora.porCaixa[k]) fora.porCaixa[k] = { lucro: 0, custo: 0 };
+    fora.porCaixa[k].lucro += r.lucro;
+    fora.porCaixa[k].custo += r.custo;
+  });
+  return fora;
+}
+
+/* "rendendo +US$ 12" / "perdendo US$ 3" — a frase curta que vai embaixo de
+   cada caixinha e no resumo. Centavo nao vira veredito: abaixo de um dolar a
+   caixinha esta "no zero". */
+function fraseDoLucro(v, custo) {
+  if (v == null) return "";
+  if (Math.abs(v) < 1) return '<span class="onde">no zero</span>';
+  var texto = (v > 0 ? "rendendo +" : "perdendo −") +
+    (privado ? "US$ " + TAPADO : dinheiroNa(Math.abs(v), "USD"));
+  /* A porcentagem sai sobre o CUSTO da propria caixinha — quanto o dinheiro
+     que mora ali rendeu, nao quanto ele pesa no todo. Sem custo (caixinha
+     toda sem historia) a porcentagem nao existe e nao se inventa. */
+  if (custo >= 1) texto += " · " + umPct((v / custo) * 100);
+  return '<span class="' + classeDoSinal(v) + '">' + texto + '</span>';
+}
+
 function blocoDoRendimento(c) {
   if (!fatias || !fatias.length || !movsCarregados) return "";
-  /* O TOTAL ABRE A CAIXA, nas duas versoes dela. Pedido dele em 11/09/2026:
-     "faltou um resumo do patrimonio total". Ele existia, mas so como letra
-     miuda no meio da pizza — e a pergunta que se faz ao abrir a aba e "quanto
-     eu tenho", antes de "quanto rendeu". O numero e o MESMO que a pizza usa
-     (c.total, na moeda que ele escolheu): dois totais diferentes na mesma
-     tela seria pedir pra desconfiar dos dois. */
+
+  /* O TOTAL ABRE A CAIXA, nas duas versoes dela. Pedido dele: "faltou um
+     resumo do patrimonio total". O numero e o MESMO que a pizza usa (c.total,
+     na moeda que ele escolheu): dois totais diferentes na mesma tela seria
+     pedir pra desconfiar dos dois. */
   var cabecaDoTotal =
     '<div class="impCabeca">Seu patrimônio</div>' +
     '<div class="patTotal">' +
@@ -3338,26 +3479,9 @@ function blocoDoRendimento(c) {
     movimentos[k].forEach(function (m) { todosMovs.push(m); });
   });
 
-  var precoEm = function (token, dia) {
-    var s = serieDePrecos[String(token || "").toUpperCase()];
-    return (s && s.porDia) ? pertoDoDia(s.porDia, dia, 5) : null;
-  };
-  var cambioEm = function (dia) {
-    var s = serieDePrecos.BRL;
-    if (!s || !s.porDia) return null;
-    var v = pertoDoDia(s.porDia, dia, 7);
-    if (v != null) return v;
-    /* Antes do comeco da serie de cambio (a fonte so tem real desde nov/2025)
-       vale o mais antigo conhecido. Derrubar a janela de um ano inteira por
-       causa do cambio da reserva — a parte PARADA da carteira — seria jogar
-       fora o muito pelo pouco. */
-    return (s.de && dia < s.de) ? s.porDia[s.de] : null;
-  };
-
   /* O ganho vivo das posicoes abertas, por cima do valor de entrada. A conta
      historica avalia posicao pela entrada (valor passado de pool nao existe em
-     fonte nenhuma); o que ela ja rendeu ate agora entra aqui, no ponto de
-     hoje, vindo da mesma leitura viva que o resto da tela mostra. */
+     fonte nenhuma); o que ela ja rendeu ate agora entra no ponto de hoje. */
   var ajusteVivo = 0;
   (c && c.linhas || []).forEach(function (l) {
     if (!l.f || !l.f.posicao || linhaFechada(l.f)) return;
@@ -3411,98 +3535,42 @@ function blocoDoRendimento(c) {
     }
     linhasHtml += '<div class="fatoLinha"><span>' + j.nome + '</span>' +
       '<b class="' + classeDoSinal(r.lucro) + '">' + maisMenos(r.lucro) +
-      ' · ' + umPct(r.pct) + '</b></div>' +
-      (r.aportes > 0 || r.saques > 0
-        ? '<div class="fatoNota">no período ' +
-          (r.aportes > 0 ? 'entraram ' + maisMenos(r.aportes).replace("+", "") + ' de aporte' : '') +
-          (r.aportes > 0 && r.saques > 0 ? ' e ' : '') +
-          (r.saques > 0 ? 'saíram ' + maisMenos(-r.saques).replace("−", "") + ' de saque' : '') +
-          ' — nada disso conta como rendimento</div>'
+      ' · ' + umPct(r.pct) + '</b></div>';
+  });
+
+  /* O RESUMO QUE ELE PEDIU, na terceira volta desta caixa: "quero so o total
+     mesmo, e quanto estou positivo e quanto fiquei negativo no total". O
+     detalhe por caixinha mora nas caixinhas; aqui e o placar. */
+  var vv = contaVerdeVermelho(c);
+  var placar = "";
+  if (vv && !vv.incompleta) {
+    placar =
+      '<div class="fatoLinha vvLinha"><span>No total, desde o começo</span>' +
+        '<b class="' + classeDoSinal(vv.total) + '">' + maisMenos(vv.total) +
+        (vv.custo >= 1 ? ' · ' + umPct((vv.total / vv.custo) * 100) : '') + '</b></div>' +
+      (vv.positivo >= 1 && vv.negativo >= 1
+        ? '<div class="fatoNota"><span class="sobe">+' +
+            (privado ? "US$ " + TAPADO : dinheiroNa(vv.positivo, "USD")) +
+          ' nas partes verdes</span> · <span class="desce">−' +
+            (privado ? "US$ " + TAPADO : dinheiroNa(vv.negativo, "USD")) +
+          ' nas vermelhas</span></div>'
+        : "") +
+      (vv.semHistoria >= 1
+        ? '<div class="fatoNota">' +
+            (privado ? "US$ " + TAPADO : dinheiroNa(vv.semHistoria, "USD")) +
+            ' sem lançamento de origem rendem zero nesta conta</div>'
         : "");
-  });
+  } else if (vv && vv.incompleta) {
+    placar = '<div class="fatoNota">o verde/vermelho aparece quando todas as ' +
+      'linhas tiverem valor e preço lidos</div>';
+  }
 
-  /* O "DESDE O COMECO" SO CONTA O DINHEIRO RASTREADO.
-   *
-   * Linha sem lancamento nenhum nao tem custo registrado — soma-la ao valor
-   * de hoje faria o dinheiro dela aparecer como lucro puro, do nada. E o
-   * espelho do erro que ele proibiu: em vez de aporte virando rendimento,
-   * dinheiro sem historia virando rendimento. Entao a conta soma so as linhas
-   * que tem pelo menos um lancamento, e diz quantas ficaram de fora.
-   *
-   * (As janelas de cima nao tem esse problema: elas medem a VARIACAO no
-   * periodo, e a variacao de uma linha parada sem historia e o preco dela
-   * mexendo — que e rendimento de verdade.) */
-  var chavesComMov = {};
-  todosMovs.forEach(function (m) { if (m.chave) chavesComMov[m.chave] = 1; });
-  var valorSeguido = 0, forasDoComeco = 0, seguidoIncompleto = false;
-  (c && c.linhas || []).forEach(function (l) {
-    if (!l.f || !l.f.chave || !chavesComMov[l.f.chave]) {
-      if (l.emUSD != null || l.convertido != null) forasDoComeco++;
-      return;
-    }
-    if (l.emUSD == null || !isFinite(l.emUSD)) { seguidoIncompleto = true; return; }
-
-    /* A LINHA PODE ESTAR SO MEIO COBERTA. Uma linha bem escriturada tem
-       lancamentos que somam exatamente a quantidade de hoje — cobertura
-       total. Mas pode ter UM lancamento e o resto vindo de antes dos registros: essa
-       parte pre-historia nao tem custo, e soma-la faria dinheiro sem historia
-       virar lucro. A propria reconstrucao mede: a quantidade na vespera do
-       primeiro lancamento e o que os lancamentos NAO explicam. So a parte
-       explicada entra na conta. */
-    if (l.f.token && l.f.quantidade != null) {
-      var movsDaqui = movimentos[l.f.chave] || [];
-      var primeiro = null;
-      movsDaqui.forEach(function (m) {
-        var d = String(m.quando || "").slice(0, 10);
-        if (d && (!primeiro || d < primeiro)) primeiro = d;
-      });
-      if (primeiro) {
-        var vespera = new Date(Date.parse(primeiro + "T00:00:00Z") - 86400000)
-          .toISOString().slice(0, 10);
-        var resto = quantidadeNaData(l.f.quantidade, movsDaqui, function (d) {
-          return precoEm(l.f.token, d);
-        }, vespera);
-        var qtd = Number(l.f.quantidade);
-        if (resto == null || !(qtd > 0)) { seguidoIncompleto = true; return; }
-        if (resto > qtd * 0.001) {
-          valorSeguido += l.emUSD * ((qtd - resto) / qtd);
-          forasDoComeco++; // a parte pre-historia conta como "de fora"
-          return;
-        }
-      }
-    }
-    valorSeguido += l.emUSD;
-  });
-  var comeco = seguidoIncompleto ? null : lucroDesdeOComeco(valorSeguido, todosMovs);
-  var primeiroDia = null;
-  todosMovs.forEach(function (m) {
-    var d = String(m.quando || "").slice(0, 10);
-    if (d && (!primeiroDia || d < primeiroDia)) primeiroDia = d;
-  });
-
-  return '<div class="resumoCaixa">' + cabecaDoTotal +
-    '<div class="impMeio">O que rendeu</div>' +
+  return '<div class="resumoCaixa">' + cabecaDoTotal + placar +
+    '<div class="impMeio">O que rendeu, por período</div>' +
     '<div class="lcDica">Aporte não conta como rendimento: ele entra na conta a partir ' +
       'da data em que foi lançado. Saque não conta como prejuízo. A conta é feita aqui ' +
       'no seu navegador — quantidade e valor não saem da sua sessão.</div>' +
     linhasHtml +
-    (comeco && comeco.custo > 0
-      ? '<div class="fatoSeu">' +
-          '<div class="fatoLinha"><span>Desde o começo' +
-            (primeiroDia ? ' (' + esc(primeiroDia) + ')' : '') + '</span>' +
-            '<b class="' + classeDoSinal(comeco.lucro) + '">' + maisMenos(comeco.lucro) +
-            (comeco.pct != null ? ' · ' + umPct(comeco.pct) + ' sobre o que você pôs' : '') +
-          '</b></div>' +
-          '<div class="fatoNota">você pôs ' + (privado ? "US$ " + TAPADO : dinheiroNa(comeco.custo, "USD")) +
-            ' (aportes menos saques) e isso vale ' +
-            (privado ? "US$ " + TAPADO : dinheiroNa(comeco.valorHoje, "USD")) + ' hoje' +
-            (forasDoComeco > 0
-              ? ' · o que não tem lançamento (' + forasDoComeco +
-                (forasDoComeco === 1 ? ' linha ou pedaço)' : ' linhas ou pedaços)') +
-                ' ficou de fora desta conta'
-              : '') + '</div>' +
-        '</div>'
-      : "") +
     '<div class="fatoQuando">posições valem a entrada no passado e o valor vivo hoje · ' +
       'preços diários do DefiLlama</div>' +
   '</div>';
@@ -8085,6 +8153,21 @@ function secaoDaCaixa(cx, d, c) {
     barra +
     '<div class="cxSoma">' + dinheiroNa(d.total, moedaVista) +
       (alvo != null ? " · alvo " + alvo + "%" : " · sem alvo") + distancia + '</div>' +
+    /* O VERDE/VERMELHO DA CAIXINHA, pedido dele em 11/09/2026: "abaixo de
+       cada caixa mostre o quanto ela esta rendendo ou dando prejuizo — ai sim
+       a separacao e legal, pra eu saber em qual parte meu patrimonio esta
+       negativo ou positivo". A mesma conta do resumo, fatiada por caixa. */
+    (function () {
+      if (!serieDePrecos) { pedirSeriesDePrecos(); return ""; }
+      var soma = 0, custoCx = 0, achou = false, incompleta = false;
+      d.linhas.forEach(function (l) {
+        var r = lucroDaLinha(l);
+        if (r == null) { incompleta = true; return; }
+        soma += r.lucro; custoCx += r.custo; achou = true;
+      });
+      if (!achou || incompleta) return "";
+      return '<div class="cxSoma cxLucro">' + fraseDoLucro(soma, custoCx) + '</div>';
+    })() +
     (fechada ? "" : corpo) +
   '</div>';
 }
