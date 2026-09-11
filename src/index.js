@@ -65,7 +65,9 @@ import {
 } from "./comparador.js";
 import { cotacaoDoDolar } from "./cambio.js";
 import { referenciaDoCiclo, quantosAtivos } from "./barca.js";
-import { cotarSimbolos, cotarMints, lerMovimento } from "./precos.js";
+import {
+  cotarSimbolos, cotarMints, lerMovimento, seriesDiarias,
+} from "./precos.js";
 import { completarIndicadores } from "./coinmetrics.js";
 import { olharMacro } from "./macro.js";
 import {
@@ -2800,6 +2802,38 @@ export default {
         if (t && t.variacao24h != null) t.movimento = lerMovimento(t.variacao24h);
       }
       return Response.json(r, { headers: { "cache-control": "no-store" } });
+    }
+
+    /* O PREÇO DIÁRIO DE CADA TOKEN, pra reconstruir quanto a carteira valia
+     * numa data passada.
+     *
+     * Pedido dele em 11/09/2026: quanto o patrimônio rendeu em 24h, 1 mês, 3
+     * meses e 1 ano — "e novo aporte é só novo aporte, o rendimento dele
+     * inicia da data que foi colocado pra frente, não pode entrar como lucro".
+     *
+     * AQUI SÓ PASSA PREÇO. Quanto ele tem de cada token é dado pessoal e mora
+     * no Supabase, atrás do login dele; a conta acontece no navegador, dentro
+     * da sessão. O Worker devolve preço e nunca vê quantidade — é a mesma
+     * divisão que deixa este painel ser público sem que o patrimônio dele
+     * encoste no D1.
+     *
+     * POST e não GET pelo mesmo motivo de /api/precos: a lista de símbolos É a
+     * composição da carteira dele, e composição de carteira não vai em URL,
+     * que fica em log de servidor e em histórico de navegador. */
+    if (url.pathname === "/api/historico" && pedido.method === "POST") {
+      let corpo = null;
+      try { corpo = await pedido.json(); } catch { corpo = null; }
+      const simbolos = (Array.isArray(corpo?.tokens) ? corpo.tokens : [])
+        .map((x) => String(x || "").trim()).filter(Boolean).slice(0, 20);
+      if (!simbolos.length) return Response.json({ series: {} });
+
+      const dias = Math.min(400, Math.max(2, Number(corpo?.dias) || 365));
+      const series = await seriesDiarias(simbolos, dias, env.BANCO);
+      return Response.json({ series, dias }, {
+        /* Preço de ONTEM pra trás não muda mais. Meia hora de cache poupa uma
+           ida à rede por F5 sem nunca servir um "hoje" velho de verdade. */
+        headers: { "cache-control": "public, max-age=1800" },
+      });
     }
 
     /* Achar uma pool, ou reler as que ele já lançou.

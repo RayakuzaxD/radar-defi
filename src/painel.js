@@ -2965,6 +2965,531 @@ function temLancamento(f) {
     : (f.valor != null && f.valor !== "");
 }
 
+/* >>>>> COPIA LITERAL DE src/patrimonio.js — NAO EDITE AQUI <<<<<
+ *
+ * A conta do rendimento roda no navegador porque os numeros dele (quantas
+ * moedas, quanto pos) nunca saem da sessao — o Worker so serve preco. O
+ * navegador nao importa modulo (receita 5.2), entao a copia e obrigada; e
+ * quando a duplicacao e obrigada, o teste obriga a concordar (5.3):
+ * testar-patrimonio.js compara ESTE trecho com o modulo caractere a
+ * caractere (crases viram apostrofos, porque crase aqui mata a pagina).
+ * Pra mudar a conta, mude src/patrimonio.js e rode o porte do painel. */
+const JANELAS = [
+  { chave: "24h", nome: "24 horas", dias: 1 },
+  { chave: "1m", nome: "1 mês", dias: 30 },
+  { chave: "3m", nome: "3 meses", dias: 90 },
+  { chave: "1a", nome: "1 ano", dias: 365 },
+];
+
+/* O movimento é dinheiro de FORA? Devolve o valor com sinal, ou 0.
+ *
+ * Um lugar só decide isto no programa inteiro. Espalhado, "colheita conta?"
+ * acabaria respondido de dois jeitos diferentes no mesmo arquivo — que é como
+ * nasce o relatório que não fecha com a tela. */
+function fluxoExterno(m) {
+  const v = Number(m?.valor_usd);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  if (m.tipo === "aporte") return v;
+  if (m.tipo === "saque") return -v;
+  return 0; // colheita: lucro realizado, não dinheiro de fora
+}
+
+/* O movimento mexe na QUANTIDADE de token? Aí a colheita conta.
+ *
+ * São perguntas diferentes e a resposta é diferente: a colheita não é dinheiro
+ * de fora, mas as moedas chegaram de verdade na carteira. Reconstruir a
+ * quantidade de ontem sem descontá-la daria uma quantidade errada — e um valor
+ * de ontem inflado vira prejuízo inventado hoje. */
+function mexeNaQuantidade(m) {
+  const v = Number(m?.valor_usd);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return m.tipo === "saque" ? -v : v; // aporte e colheita entram
+}
+
+const soODia = (d) => String(d || "").slice(0, 10);
+
+/* QUANTOS TOKENS HAVIA NA DATA, partindo de quantos há hoje.
+ *
+ * Anda pra trás: tudo que ENTROU depois daquela data não estava lá, e tudo que
+ * SAIU depois ainda estava. Cada movimento é convertido de dólar pra token
+ * pelo preço DO DIA DELE — o 'valor_usd' já vem congelado no lançamento, e é
+ * justamente isso que faz a conversão ser o número de moedas que aquele
+ * dinheiro comprou, e não o que compraria hoje.
+ *
+ * Devolve null quando falta preço de algum dia necessário. Null aqui vira
+ * "esta janela não aparece na tela" — melhor do que um valor que parece certo. */
+function quantidadeNaData(qtdHoje, movimentos, precoEm, data) {
+  const q0 = Number(qtdHoje);
+  if (!Number.isFinite(q0) || q0 < 0) return null;
+  const corte = soODia(data);
+  if (!corte) return null;
+
+  let q = q0;
+  for (const m of movimentos || []) {
+    const quando = soODia(m?.quando);
+    if (!quando || quando <= corte) continue;
+    const usd = mexeNaQuantidade(m);
+    if (!usd) continue;
+
+    /* A QUANTIDADE LANÇADA MANDA; o preço do dia é o socorro.
+     *
+     * O lançamento dele guarda 'qtd_a' — quantas moedas aquele dinheiro
+     * comprou DE VERDADE, no preço que ele pagou, não no fechamento do dia.
+     * É o que ele disse em 11/09/2026: "a blockchain dá a idade do token e
+     * quando comprei por quanto". Quando a quantidade existe, converter por
+     * preço seria trocar um fato por uma estimativa.
+     *
+     * Hoje 17 dos 24 lançamentos têm quantidade; os outros 7 caem na
+     * conversão pelo preço do dia, que é estimativa e se declara como tal
+     * pelo campo 'estimada' no resultado. */
+    const qm = Number(m?.qtd_a);
+    if (Number.isFinite(qm) && qm > 0) {
+      q -= (usd < 0 ? -qm : qm);
+    } else {
+      const p = precoEm(quando);
+      if (!(p > 0)) return null;
+      q -= usd / p;
+    }
+  }
+  /* Quantidade negativa não é um saldo: é sinal de que a história está
+     incompleta (uma troca não lançada, por exemplo). Devolver zero esconderia
+     isso; devolver null faz a janela sumir e é honesto. */
+  return q < -1e-12 ? null : Math.max(0, q);
+}
+
+/* O VALOR DA CARTEIRA INTEIRA NUMA DATA.
+ *
+ * Três tipos de linha, três tratamentos, e os três declaram o que não sabem:
+ *
+ *   token + quantidade   reconstruída (acima) e avaliada ao preço do dia
+ *   posição na cadeia    valia ZERO antes de entrar; depois, o valor de
+ *                        entrada, porque valor histórico de pool não existe
+ *                        em fonte nenhuma
+ *   valor digitado       o que ele digitou, convertido pelo câmbio do dia
+ *
+ * A POSIÇÃO É A PARTE FRACA, e está dita: entre a data de entrada e hoje eu uso
+ * o valor de entrada, que ignora o que ela rendeu no meio. Para as janelas de
+ * um mês pra cima isso não toca em nada — nenhuma posição dele tem mais de
+ * quatro dias — mas o dia em que tiver, o número vai ser conservador, e é o
+ * lado certo pra errar. */
+function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
+  const corte = soODia(data);
+  if (!corte || !Array.isArray(linhas)) return null;
+
+  const porChave = new Map();
+  for (const m of movimentos || []) {
+    const k = m?.chave;
+    if (!k) continue;
+    if (!porChave.has(k)) porChave.set(k, []);
+    porChave.get(k).push(m);
+  }
+
+  let total = 0;
+  for (const l of linhas) {
+    const movs = porChave.get(l?.chave) || [];
+
+    if (l?.posicao) {
+      const entrou = soODia(l.data_entrada);
+      const fechou = soODia(l.fechada_em);
+      const v = Number(l.valor_entrada);
+      if (!Number.isFinite(v)) return null;
+
+      if (entrou && entrou <= corte) {
+        if (fechou && fechou <= corte) continue; // já não existia na data
+        total += v; // aberta na data: vale a entrada, a melhor medida que há
+        continue;
+      }
+
+      /* A POSIÇÃO AINDA NÃO EXISTIA — MAS O DINHEIRO DELA JÁ, e este é o
+       * buraco que quase virou lucro fantasma.
+       *
+       * Quando ele funda uma pool com USDC que já estava na carteira, a linha
+       * de USDC que segue a cadeia DIMINUI SOZINHA, sem lançamento nenhum —
+       * é remanejamento, não aporte (receita 3.5). A reconstrução da linha
+       * líquida não enxerga essa saída, então numa data anterior à pool ela
+       * devolveria o USDC já magro E a pool ainda inexistente: o dinheiro
+       * sumia do passado, e dinheiro que some do passado reaparece no
+       * presente como rendimento. É exatamente a classe de erro que ele pediu
+       * pra nunca cometer, só que de cabeça pra baixo.
+       *
+       * Então: posição aberta DEPOIS da data devolve ao passado o pedaço do
+       * seu valor de entrada que veio DE DENTRO — a entrada menos os aportes
+       * externos lançados na chave dela nesse meio-tempo. O que veio de fora
+       * ("desmontei 2 e coloquei capital novo") tem lançamento, e lançamento
+       * já é tratado como fluxo; devolver esse pedaço também contaria o
+       * capital novo duas vezes.
+       *
+       * E SÓ PRA POSIÇÃO AINDA ABERTA HOJE. A pergunta não é "quando ela
+       * fechou", é "o dinheiro dela está fora da carteira líquida AGORA?".
+       * Posição que abriu e fechou depois da data devolveu o dinheiro pra
+       * carteira antes de hoje: a quantidade líquida de hoje já o contém, a
+       * reconstrução que parte de hoje já o carrega pro passado, e devolver
+       * a entrada de novo contaria o mesmo dinheiro duas vezes. */
+      if (!fechou) {
+        let deFora = 0;
+        for (const m of movs) {
+          const quando = soODia(m?.quando);
+          if (!quando || quando <= corte) continue;
+          const f = fluxoExterno(m);
+          if (f > 0) deFora += f;
+        }
+        total += Math.max(0, v - deFora);
+      }
+      continue;
+    }
+
+    if (l?.token != null && l?.quantidade != null) {
+      const q = quantidadeNaData(l.quantidade, movs, (d) => precoEm(l.token, d), corte);
+      if (q == null) return null;
+      const p = precoEm(l.token, corte);
+      if (!(p > 0)) return null;
+      total += q * p;
+      continue;
+    }
+
+    if (l?.valor != null) {
+      const v = Number(l.valor);
+      if (!Number.isFinite(v)) return null;
+      if (l.moeda === "BRL") {
+        const c = cambioEm(corte); // dólares por real
+        if (!(c > 0)) return null;
+        total += v * c;
+      } else {
+        total += v;
+      }
+      continue;
+    }
+  }
+  return total;
+}
+
+/* O RENDIMENTO DE UM PERÍODO, com o aporte neutralizado.
+ *
+ * Recebe a série diária já montada: [{ dia, valor, fluxo }], do mais velho pro
+ * mais novo, com 'fluxo' sendo o dinheiro de fora que entrou (+) ou saiu (−)
+ * NAQUELE dia.
+ *
+ * Devolve o lucro em dólar e o retorno em porcentagem, e os dois respondem
+ * perguntas diferentes: o dólar é o que ele sente no bolso, a porcentagem é
+ * como o dinheiro se comportou independentemente de quanto dinheiro era. */
+function rendimentoDoPeriodo(serie) {
+  if (!Array.isArray(serie) || serie.length < 2) return null;
+  for (const p of serie) {
+    /* 'p.valor == null' ANTES do Number(), e não depois.
+     *
+     * 'Number(null)' é 0, e 0 é finito — então a guarda que só olhava
+     * 'Number.isFinite' deixava passar um dia SEM medida como se fosse um dia
+     * em que a carteira valia zero. Uma janela com um buraco assim no meio
+     * mostraria uma queda de 100% seguida de uma alta infinita, e as duas com
+     * cara de número. Foi o teste que pegou. */
+    if (!p || p.valor == null || !Number.isFinite(Number(p.valor))) return null;
+  }
+
+  const inicio = Number(serie[0].valor);
+  const fim = Number(serie[serie.length - 1].valor);
+
+  /* Os fluxos do PRIMEIRO ponto não contam: ele é a fotografia de onde a
+     janela começa, e o que entrou antes dela já está dentro do valor inicial. */
+  let aportes = 0, saques = 0;
+  for (let i = 1; i < serie.length; i++) {
+    const f = Number(serie[i].fluxo) || 0;
+    if (f > 0) aportes += f; else saques += -f;
+  }
+
+  const lucro = fim - inicio - aportes + saques;
+
+  /* O RETORNO ENCADEADO. Cada dia é medido sobre o capital daquele dia, e o
+     fluxo do dia sai do numerador — é isso que faz o aporte valer zero por
+     definição, e não por sorte de arredondamento. */
+  let fator = 1;
+  let temBuraco = false;
+  for (let i = 1; i < serie.length; i++) {
+    const v0 = Number(serie[i - 1].valor);
+    const v1 = Number(serie[i].valor);
+    const f = Number(serie[i].fluxo) || 0;
+    if (!(v0 > 0)) {
+      /* Carteira vazia no começo do dia: não há sobre o que render. O dia é
+         pulado em vez de virar divisão por zero — e fica marcado, porque uma
+         janela cheia de buracos não merece a mesma confiança. */
+      if (v1 - f !== 0) temBuraco = true;
+      continue;
+    }
+    fator *= (v1 - f) / v0;
+  }
+
+  return {
+    inicio, fim, lucro, aportes, saques,
+    pct: (fator - 1) * 100,
+    dias: serie.length - 1,
+    deQuando: serie[0].dia,
+    ateQuando: serie[serie.length - 1].dia,
+    temBuraco,
+  };
+}
+
+/* O LUCRO DESDE O COMEÇO — exato, e sem precisar de história nenhuma.
+ *
+ * É o único número que não depende de saber quanto a carteira valia no
+ * passado: o que entrou menos o que saiu é o custo, e o que ela vale hoje
+ * menos esse custo é o lucro. Vale para os 18 meses de lançamentos dele.
+ *
+ * A colheita não entra, e essa é a parte que mais gente erra: ela já está
+ * dentro do valor de hoje. Contá-la como aporte inflaria o custo e apagaria
+ * exatamente o lucro que ela representa. */
+function lucroDesdeOComeco(valorHoje, movimentos) {
+  const v = Number(valorHoje);
+  if (!Number.isFinite(v)) return null;
+  let aportes = 0, saques = 0;
+  for (const m of movimentos || []) {
+    const f = fluxoExterno(m);
+    if (f > 0) aportes += f; else if (f < 0) saques += -f;
+  }
+  const custo = aportes - saques;
+  return {
+    valorHoje: v, aportes, saques, custo,
+    lucro: v - custo,
+    pct: custo > 0 ? ((v - custo) / custo) * 100 : null,
+  };
+}
+
+/* >>>>> FIM DA COPIA DE src/patrimonio.js <<<<< */
+
+/* ---------------------------------------------------------------------------
+ * O QUE RENDEU — a caixa que ele pediu em 11/09/2026.
+ *
+ * "sentindo falta da caixinha mostrar quanto meu patrimonio rendeu ou diminuiu
+ *  nas ultimas 24hrs / 1 mes / 3 meses / 1 ano. mas precisa tomar cuidado que
+ *  vi varios lugares contando novos aportes como rendimento — novo aporte e so
+ *  novo aporte, o rendimento dele inicia da data que foi colocado pra frente."
+ *
+ * A frase dele e a regra, e a conta que a cumpre esta na copia acima. Aqui e
+ * so o encanamento: buscar o preco de cada dia, montar a serie e desenhar. */
+var serieDePrecos = null;
+var serieBuscando = false;
+
+function pedirSeriesDePrecos() {
+  if (serieBuscando || serieDePrecos) return;
+  var tokens = {};
+  (fatias || []).forEach(function (f) {
+    if (f.token) tokens[String(f.token).toUpperCase()] = 1;
+    if (String(f.moeda || "").toUpperCase() === "BRL") tokens.BRL = 1;
+  });
+  var lista = Object.keys(tokens);
+  if (!lista.length) return;
+  serieBuscando = true;
+  fetch("/api/historico?v=${VERSAO}", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    /* So os SIMBOLOS viajam — nunca quantidade nem valor. E por POST: a lista
+       de simbolos e a composicao da carteira dele, e composicao nao vai em
+       URL, que fica em log. */
+    body: JSON.stringify({ tokens: lista, dias: 370 }),
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    serieDePrecos = (j && j.series) || {};
+    serieBuscando = false;
+    desenhar();
+  }).catch(function () { serieBuscando = false; });
+}
+
+/* O preco mais proximo pra tras. Fim de semana nao existe pra cambio, e o
+   ponto de hoje pode ainda nao ter fechado — ate a folga dada de tolerancia
+   antes de desistir. */
+function pertoDoDia(porDia, dia, folga) {
+  if (porDia[dia] != null) return porDia[dia];
+  var t = Date.parse(dia + "T00:00:00Z");
+  if (!isFinite(t)) return null;
+  for (var i = 1; i <= folga; i++) {
+    var d = new Date(t - i * 86400000).toISOString().slice(0, 10);
+    if (porDia[d] != null) return porDia[d];
+  }
+  return null;
+}
+
+function blocoDoRendimento(c) {
+  if (!fatias || !fatias.length || !movsCarregados) return "";
+  if (!serieDePrecos) {
+    pedirSeriesDePrecos();
+    return '<div class="resumoCaixa">' +
+      '<div class="impCabeca">O que rendeu</div>' +
+      '<div class="fatoNota">medindo — buscando o preço de cada dia…</div>' +
+    '</div>';
+  }
+
+  var todosMovs = [];
+  Object.keys(movimentos).forEach(function (k) {
+    movimentos[k].forEach(function (m) { todosMovs.push(m); });
+  });
+
+  var precoEm = function (token, dia) {
+    var s = serieDePrecos[String(token || "").toUpperCase()];
+    return (s && s.porDia) ? pertoDoDia(s.porDia, dia, 5) : null;
+  };
+  var cambioEm = function (dia) {
+    var s = serieDePrecos.BRL;
+    if (!s || !s.porDia) return null;
+    var v = pertoDoDia(s.porDia, dia, 7);
+    if (v != null) return v;
+    /* Antes do comeco da serie de cambio (a fonte so tem real desde nov/2025)
+       vale o mais antigo conhecido. Derrubar a janela de um ano inteira por
+       causa do cambio da reserva — a parte PARADA da carteira — seria jogar
+       fora o muito pelo pouco. */
+    return (s.de && dia < s.de) ? s.porDia[s.de] : null;
+  };
+
+  /* O ganho vivo das posicoes abertas, por cima do valor de entrada. A conta
+     historica avalia posicao pela entrada (valor passado de pool nao existe em
+     fonte nenhuma); o que ela ja rendeu ate agora entra aqui, no ponto de
+     hoje, vindo da mesma leitura viva que o resto da tela mostra. */
+  var ajusteVivo = 0;
+  (c && c.linhas || []).forEach(function (l) {
+    if (!l.f || !l.f.posicao || linhaFechada(l.f)) return;
+    var entrada = Number(l.f.valor_entrada);
+    if (l.emUSD != null && isFinite(l.emUSD) && isFinite(entrada)) {
+      ajusteVivo += l.emUSD - entrada;
+    }
+  });
+
+  var fluxoPorDia = {};
+  todosMovs.forEach(function (m) {
+    var f = fluxoExterno(m);
+    if (!f) return;
+    var d = String(m.quando || "").slice(0, 10);
+    fluxoPorDia[d] = (fluxoPorDia[d] || 0) + f;
+  });
+
+  /* UMA serie de 366 dias; as janelas menores sao fatias dela. Um dia sem
+     preco vira valor null — e a janela que contem esse dia nao aparece, em
+     vez de aparecer errada. */
+  var agora = Date.now();
+  var serie = [];
+  for (var i = 365; i >= 0; i--) {
+    var dia = new Date(agora - i * 86400000).toISOString().slice(0, 10);
+    var v = valorNaData({
+      linhas: fatias, movimentos: todosMovs,
+      precoEm: precoEm, cambioEm: cambioEm,
+    }, dia);
+    serie.push({
+      dia: dia,
+      valor: v == null ? null : v + (i === 0 ? ajusteVivo : 0),
+      fluxo: fluxoPorDia[dia] || 0,
+    });
+  }
+
+  var maisMenos = function (v) {
+    if (privado) return "US$ " + TAPADO;
+    return (v >= 0 ? "+" : "−") + dinheiroNa(Math.abs(v), "USD");
+  };
+
+  var linhasHtml = "";
+  JANELAS.forEach(function (j) {
+    var fatia = serie.slice(serie.length - 1 - j.dias);
+    var inteira = true;
+    fatia.forEach(function (p) { if (p.valor == null) inteira = false; });
+    var r = inteira ? rendimentoDoPeriodo(fatia) : null;
+    if (!r) {
+      linhasHtml += '<div class="fatoLinha"><span>' + j.nome +
+        '</span><b class="vazio2">sem preço de algum dia</b></div>';
+      return;
+    }
+    linhasHtml += '<div class="fatoLinha"><span>' + j.nome + '</span>' +
+      '<b class="' + classeDoSinal(r.lucro) + '">' + maisMenos(r.lucro) +
+      ' · ' + umPct(r.pct) + '</b></div>' +
+      (r.aportes > 0 || r.saques > 0
+        ? '<div class="fatoNota">no período ' +
+          (r.aportes > 0 ? 'entraram ' + maisMenos(r.aportes).replace("+", "") + ' de aporte' : '') +
+          (r.aportes > 0 && r.saques > 0 ? ' e ' : '') +
+          (r.saques > 0 ? 'saíram ' + maisMenos(-r.saques).replace("−", "") + ' de saque' : '') +
+          ' — nada disso conta como rendimento</div>'
+        : "");
+  });
+
+  /* O "DESDE O COMECO" SO CONTA O DINHEIRO RASTREADO.
+   *
+   * Linha sem lancamento nenhum nao tem custo registrado — soma-la ao valor
+   * de hoje faria o dinheiro dela aparecer como lucro puro, do nada. E o
+   * espelho do erro que ele proibiu: em vez de aporte virando rendimento,
+   * dinheiro sem historia virando rendimento. Entao a conta soma so as linhas
+   * que tem pelo menos um lancamento, e diz quantas ficaram de fora.
+   *
+   * (As janelas de cima nao tem esse problema: elas medem a VARIACAO no
+   * periodo, e a variacao de uma linha parada sem historia e o preco dela
+   * mexendo — que e rendimento de verdade.) */
+  var chavesComMov = {};
+  todosMovs.forEach(function (m) { if (m.chave) chavesComMov[m.chave] = 1; });
+  var valorSeguido = 0, forasDoComeco = 0, seguidoIncompleto = false;
+  (c && c.linhas || []).forEach(function (l) {
+    if (!l.f || !l.f.chave || !chavesComMov[l.f.chave]) {
+      if (l.emUSD != null || l.convertido != null) forasDoComeco++;
+      return;
+    }
+    if (l.emUSD == null || !isFinite(l.emUSD)) { seguidoIncompleto = true; return; }
+
+    /* A LINHA PODE ESTAR SO MEIO COBERTA. Uma linha bem escriturada tem
+       lancamentos que somam exatamente a quantidade de hoje — cobertura
+       total. Mas pode ter UM lancamento e o resto vindo de antes dos registros: essa
+       parte pre-historia nao tem custo, e soma-la faria dinheiro sem historia
+       virar lucro. A propria reconstrucao mede: a quantidade na vespera do
+       primeiro lancamento e o que os lancamentos NAO explicam. So a parte
+       explicada entra na conta. */
+    if (l.f.token && l.f.quantidade != null) {
+      var movsDaqui = movimentos[l.f.chave] || [];
+      var primeiro = null;
+      movsDaqui.forEach(function (m) {
+        var d = String(m.quando || "").slice(0, 10);
+        if (d && (!primeiro || d < primeiro)) primeiro = d;
+      });
+      if (primeiro) {
+        var vespera = new Date(Date.parse(primeiro + "T00:00:00Z") - 86400000)
+          .toISOString().slice(0, 10);
+        var resto = quantidadeNaData(l.f.quantidade, movsDaqui, function (d) {
+          return precoEm(l.f.token, d);
+        }, vespera);
+        var qtd = Number(l.f.quantidade);
+        if (resto == null || !(qtd > 0)) { seguidoIncompleto = true; return; }
+        if (resto > qtd * 0.001) {
+          valorSeguido += l.emUSD * ((qtd - resto) / qtd);
+          forasDoComeco++; // a parte pre-historia conta como "de fora"
+          return;
+        }
+      }
+    }
+    valorSeguido += l.emUSD;
+  });
+  var comeco = seguidoIncompleto ? null : lucroDesdeOComeco(valorSeguido, todosMovs);
+  var primeiroDia = null;
+  todosMovs.forEach(function (m) {
+    var d = String(m.quando || "").slice(0, 10);
+    if (d && (!primeiroDia || d < primeiroDia)) primeiroDia = d;
+  });
+
+  return '<div class="resumoCaixa">' +
+    '<div class="impCabeca">O que rendeu</div>' +
+    '<div class="lcDica">Aporte não conta como rendimento: ele entra na conta a partir ' +
+      'da data em que foi lançado. Saque não conta como prejuízo. A conta é feita aqui ' +
+      'no seu navegador — quantidade e valor não saem da sua sessão.</div>' +
+    linhasHtml +
+    (comeco && comeco.custo > 0
+      ? '<div class="fatoSeu">' +
+          '<div class="fatoLinha"><span>Desde o começo' +
+            (primeiroDia ? ' (' + esc(primeiroDia) + ')' : '') + '</span>' +
+            '<b class="' + classeDoSinal(comeco.lucro) + '">' + maisMenos(comeco.lucro) +
+            (comeco.pct != null ? ' · ' + umPct(comeco.pct) + ' sobre o que você pôs' : '') +
+          '</b></div>' +
+          '<div class="fatoNota">você pôs ' + (privado ? "US$ " + TAPADO : dinheiroNa(comeco.custo, "USD")) +
+            ' (aportes menos saques) e isso vale ' +
+            (privado ? "US$ " + TAPADO : dinheiroNa(comeco.valorHoje, "USD")) + ' hoje' +
+            (forasDoComeco > 0
+              ? ' · o que não tem lançamento (' + forasDoComeco +
+                (forasDoComeco === 1 ? ' linha ou pedaço)' : ' linhas ou pedaços)') +
+                ' ficou de fora desta conta'
+              : '') + '</div>' +
+        '</div>'
+      : "") +
+    '<div class="fatoQuando">posições valem a entrada no passado e o valor vivo hoje · ' +
+      'preços diários do DefiLlama</div>' +
+  '</div>';
+}
+
 function contasDaCarteira() {
   var taxa = cotacao();
   var total = 0, forisc = 0;
@@ -3520,7 +4045,8 @@ function blocoDosProtocolos() {
 }
 
 function telaDoResumo(c) {
-  return blocoDaPizza(c) + blocoDoRanking(c) +
+  /* O rendimento vem primeiro: e a pergunta que ele abre a aba pra fazer. */
+  return blocoDoRendimento(c) + blocoDaPizza(c) + blocoDoRanking(c) +
     blocoDoCiclo() + blocoDaRede() + blocoDosProtocolos();
 }
 
