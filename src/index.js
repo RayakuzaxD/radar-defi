@@ -3307,6 +3307,46 @@ export default {
      * Por isso ela mostra os dois lados: fonte e banco lado a lado, pra
      * discordancia entre eles aparecer em vez de virar um numero errado
      * calado na tela. */
+    /* A FONTE DE REFERENCIA DOS INDICADORES ALCANCA O WORKER HOJE?
+     *
+     * A resposta, medida em 11/09/2026: NAO, e nao e o engano do Farside.
+     * Perguntei seis vezes seguidas, com e sem cabecalho de identificacao, e
+     * vieram seis 429 RATE_LIMIT_HOUR_EXCEEDED. O limite e real: 10 chamadas
+     * por hora por IP, e o Worker sai pelo IP compartilhado da Cloudflare, que
+     * chega no balde ja vazio. Nao adianta se apresentar melhor.
+     *
+     * A consequencia estava calada no banco: a linha `indicadores_bons` NUNCA
+     * existiu, ou seja, nenhuma rodada jamais guardou um valor desta fonte. O
+     * MVRV, o Z-Score e o Puell so aparecem na tela pela fonte reserva, e o
+     * VDD — que nao tem reserva — nunca existiu.
+     *
+     * O conserto e `semear-indicadores.js`, rodado do computador do Rayakuza,
+     * onde o mesmo endereco responde 200 no primeiro tento. Esta rota fica
+     * porque e ela que diz QUANDO parar de precisar do semeador: no dia em que
+     * ela devolver 200, a rodada volta a se virar sozinha.
+     *
+     * UMA CHAMADA SO. Queimar a cota pra medir a cota seria burro, e a primeira
+     * versao desta rota fazia duas. */
+    if (url.pathname === "/saude/vdd") {
+      let resposta;
+      try {
+        const r = await fetch("https://bitcoin-data.com/v1/vdd-multiple/last", {
+          headers: {
+            accept: "application/json",
+            "user-agent": "radar-defi",
+          },
+        });
+        resposta = r.status + " · " + (await r.text()).slice(0, 130);
+      } catch (e) { resposta = "erro: " + String(e?.message || e).slice(0, 80); }
+
+      const guardados = await lerAjuste(env, "indicadores_bons").catch(() => null);
+      return Response.json({
+        fontePrincipal: resposta,
+        guardadosNoBanco: guardados ? JSON.parse(guardados) : null,
+        comoSemear: "node semear-indicadores.js, do computador do Rayakuza",
+      }, { headers: { "cache-control": "no-store" } });
+    }
+
     if (url.pathname === "/saude/etf") {
       const g = await env.BANCO.prepare(
         "SELECT dia, total FROM etf_fluxo ORDER BY dia DESC LIMIT 10").all().catch(() => null);
