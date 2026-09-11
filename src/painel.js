@@ -184,6 +184,22 @@ export function paginaDoPainel() {
      que sairiam achatadas. Entao a proporcao mora no viewBox (720x150) e a
      altura segue a largura. */
   .btcGraf { width: 100%; height: auto; display: block; margin: 4px 0 2px; }
+  .vol { margin-top: 6px; }
+  .volBarra { position: relative; height: 4px; border-radius: 3px;
+    background: var(--linha); overflow: hidden; }
+  /* Realce, e nao verde: isto e uma MEDIDA, nao um elogio. Verde diria que a
+     faixa esta "certa", e quanto a faixa deve ser larga e decisao dele. */
+  .volBarra i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
+    background: var(--realce); }
+  .vol.volEstoura .volBarra i { background: var(--alerta); }
+  /* A marca da largura da faixa: passar dela e nao caber. */
+  .volBarra b { position: absolute; top: -2px; bottom: -2px; width: 1px;
+    background: var(--texto); opacity: .45; }
+  .volTexto { font-size: 11px; color: var(--fraco); line-height: 1.45; margin-top: 4px; }
+  .remontar { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--linha); }
+  .remontarTit { font-size: 11px; color: var(--fraco); }
+  .remontarFaixa { font-size: 13px; font-variant-numeric: tabular-nums; margin: 1px 0 3px; }
+  .remontarNota { font-size: 11px; color: var(--fraco); line-height: 1.45; }
   .faixaRegua { margin: 8px 0 10px; }
   .faixaBarra { position: relative; height: 6px; border-radius: 999px;
     background: linear-gradient(90deg, var(--desce), var(--alerta), var(--sobe)); opacity: .55; }
@@ -6925,6 +6941,69 @@ function barraDaFaixa(pos) {
     '</div>' +
     '<div class="faixaBarra"><i style="left:' + onde.toFixed(1) + '%"></i></div>' +
     '<div class="faixaTexto">' + esc(r.texto) + '</div>' +
+    linhaDaVolatilidade(pos) +
+    blocoDaRemontagem(pos) +
+  '</div>';
+}
+
+/* QUANTO O PAR ANDOU NA SEMANA, do lado da largura da faixa.
+ *
+ * Dois numeros na mesma unidade, e a comparacao pronta. E so isso: o material
+ * diz "ativos volateis, range maior" e nao diz quanto maior — entao a linha
+ * mede e cala. Quem decide se a faixa esta apertada demais e ele.
+ *
+ * APARECE SEMPRE que houver a medida, dentro ou fora da faixa. A remontagem so
+ * faz sentido depois de sair; esta aqui e justamente o que da pra olhar ANTES.
+ *
+ * A barrinha e a mesma conta virada em desenho: a semana pintada por cima da
+ * largura da faixa. Passou da linha, nao coube. */
+function linhaDaVolatilidade(pos) {
+  var v = pos && pos.volatilidade;
+  if (!v) return "";
+  var quanto = Math.min(100, (v.razao / 1.5) * 100);
+  return '<div class="vol' + (v.cabe ? "" : " volEstoura") + '">' +
+    '<div class="volBarra"><i style="width:' + quanto.toFixed(1) + '%"></i>' +
+      '<b style="left:' + (100 / 1.5).toFixed(1) + '%"></b></div>' +
+    '<div class="volTexto">' + esc(v.texto) + '</div>' +
+  '</div>';
+}
+
+/* ONDE A FAIXA CAIRIA, pela conta do Portal 5.
+ *
+ * So aparece com a posicao FORA da faixa — dentro dela nao ha pergunta.
+ *
+ * O QUE ESTA LINHA NAO FAZ: mandar remontar. Ela mostra onde a faixa cairia
+ * pela conta do material, e para. A decisao e dele, e essa e a regra mais
+ * antiga deste projeto.
+ *
+ * A BORDA QUE ENCOSTA NO PRECO E A QUE IMPORTA, e por isso ela e dita: quem
+ * saiu por baixo esta com o ativo na mao, quem saiu por cima esta com a
+ * stablecoin, e a faixa desliza pra esse lado justamente pra a posicao se
+ * remontar sem trocar nada. Sem essa frase os dois numeros pareceriam
+ * arbitrarios. */
+function blocoDaRemontagem(pos) {
+  var r = pos && pos.remontar;
+  if (!r) return "";
+  var n = numeroDaFaixa;
+  return '<div class="remontar">' +
+    '<div class="remontarTit">Pela conta do material, mantendo a largura:</div>' +
+    '<div class="remontarFaixa"><b>' + n(r.novoMin) + '</b> a <b>' + n(r.novoMax) + '</b>' +
+      ' <span class="onde">(' + r.larguraPct.toFixed(1).replace(".", ",") + '% de largura)</span></div>' +
+    '<div class="remontarNota">' +
+      /* O TOKEN PELO NOME, e nao "o ativo" e "a stablecoin".
+         A primeira versao dizia "toda na stablecoin" quando o preco saia por
+         cima — e a posicao SOL/ETH dele nao tem stablecoin nenhuma. Escrever a
+         frase pensando num par com stable e escreve-la errada pra metade dos
+         pares que ele abre. O nome do token sempre cabe, e nunca mente. */
+      (r.porBaixo
+        ? 'O piso encosta no preço de agora porque a posição está toda em ' +
+          esc(pos.simboloA || 'um lado') + ' — assim ela se remonta sem troca.'
+        : 'O teto encosta no preço de agora porque a posição está toda em ' +
+          esc(pos.simboloB || 'um lado') + ' — assim ela se remonta sem troca.') +
+    '</div>' +
+    '<div class="remontarNota">O material avisa que a mesma largura rende menos tokens, ' +
+      'e escreve ao lado: "remontar com um range maior". ' +
+      String(r.vezesMaisLarga).replace('.', ',') + 'x seria <b>' + n(r.largaMin) + '</b> a <b>' + n(r.largaMax) + '</b>.</div>' +
   '</div>';
 }
 

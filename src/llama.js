@@ -180,7 +180,10 @@ export async function taxasDosProtocolos() {
  * nos portões, isto não pode virar 80 chamadas e derrubar a rodada inteira. O
  * que não couber fica sem correlação — e sem correlação é "não sei", que o
  * resto do código já sabe tratar. */
-export async function historicoDePrecos(ids, { dias = 60, maximoDeLotes = 24 } = {}) {
+export async function historicoDePrecos(
+  ids,
+  { dias = 60, maximoDeLotes = 24, minimoDePontos = 20 } = {},
+) {
   const unicos = [...new Set((ids || []).filter(Boolean))];
   const series = new Map();
 
@@ -214,13 +217,41 @@ export async function historicoDePrecos(ids, { dias = 60, maximoDeLotes = 24 } =
         const precos = (moeda?.prices || [])
           .map((p) => Number(p?.price))
           .filter((v) => Number.isFinite(v) && v > 0);
-        if (precos.length >= 20) series.set(id, precos);
+        /* O PISO DE PONTOS É DE QUEM PERGUNTA, e não desta função.
+         *
+         * Ele nasceu para a correlação, que com menos de 20 dias devolve
+         * número sem significado. Mas a volatilidade de 7 dias do par pede
+         * exatamente 7 pontos — com o piso fixo em 20 ela receberia sempre um
+         * mapa vazio, e sem erro nenhum no log. É o mesmo tipo de silêncio que
+         * escondeu os 101 pares sem correlação. */
+        if (precos.length >= minimoDePontos) series.set(id, precos);
       }
     } catch {
       // idem: silêncio aqui vira "sem correlação", não vira erro na rodada
     }
   }
   return { series, lotesUsados: lotes, pedidos: unicos.length };
+}
+
+/* SETE DIAS DE PREÇO DOS TOKENS DAS POOLS DELE, numa chamada só.
+ *
+ * O `solana:MINT` é o jeito de pedir um token da Solana pelo endereço do mint,
+ * e é o que permite medir um par que não tem par em dólar em lugar nenhum.
+ *
+ * Pede 8 pontos para ter 7 dias cheios mesmo quando o ponto de hoje ainda não
+ * fechou. As séries voltam com TAMANHOS DIFERENTES quando um token é mais novo
+ * que o outro (medido em 11/09/2026: SOL veio com 8 pontos e WETH com 7) — por
+ * isso quem faz a conta alinha as duas pelo fim. */
+export async function precosDaSemana(mints) {
+  const ids = [...new Set((mints || []).filter(Boolean))].map((m) => "solana:" + m);
+  if (!ids.length) return new Map();
+  const { series } = await historicoDePrecos(ids, {
+    dias: 8, maximoDeLotes: 2, minimoDePontos: 3,
+  });
+  /* Devolve indexado pelo mint puro, que é como o resto do radar chama token. */
+  const porMint = new Map();
+  for (const [id, precos] of series) porMint.set(id.replace(/^solana:/, ""), precos);
+  return porMint;
 }
 
 /* O histórico de uma rede, direto da fonte. Usado só pelo semeador — o radar

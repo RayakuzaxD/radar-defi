@@ -204,6 +204,186 @@ export function cartazContraChao(chao, cartaz, vezes = CARTAZ_INFLADO_MEU) {
   };
 }
 
+/* A REMONTAGEM — onde a faixa ficaria, quando a posição sai dela.
+ *
+ * ---------------------------------------------------------------------------
+ * A REGRA, do Portal 5 (Dormiu, Acordou, Coletou), páginas 84 e 85
+ *
+ * O material dá o passo a passo em duas versões, uma por lado:
+ *
+ *   saiu por baixo:  "Subtraia o preço mínimo pelo preço atual. Some o
+ *                     resultado e o preço máximo. Novo Range = Preço Atual +
+ *                     Resultado."
+ *   saiu por cima:   "Subtraia o preço máximo pelo preço atual. Subtraia o
+ *                     resultado e o preço mínimo."
+ *
+ * As duas dizem a mesma coisa de um jeito difícil: A FAIXA DESLIZA INTEIRA,
+ * mantendo a largura, até a borda que o preço atravessou encostar no preço de
+ * agora.
+ *
+ *   saiu por baixo  ->  [preço de agora, preço de agora + largura]
+ *   saiu por cima   ->  [preço de agora − largura, preço de agora]
+ *
+ * CONFERIDO CONTRA OS NÚMEROS DO PRÓPRIO MATERIAL, e os dois batem:
+ *
+ *   faixa [1,12 – 1,21], preço em 1,03  ->  [1,03 – 1,12]   (o slide diz 1,03-1,12)
+ *   faixa [0,91 – 1,06], preço em 1,15  ->  [1,00 – 1,15]   (o slide diz 1-1,15)
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE A FAIXA VAI PARA ESSE LADO, E NÃO EM VOLTA DO PREÇO
+ *
+ * Porque quem saiu por baixo está com o ativo na mão, e quem saiu por cima
+ * está com a stablecoin. Deslizando a faixa até a borda encostar no preço, a
+ * posição se remonta SEM TROCAR NADA — o que se tem já é o lado certo daquela
+ * borda.
+ *
+ * É isso que a página 83 avisa por outro caminho: "se montar no mesmo
+ * intervalo, vai ter menos tokens". Recentrar em volta do preço obrigaria a
+ * trocar metade, e trocar metade logo depois de uma queda é realizar o
+ * prejuízo pra poder voltar ao mesmo lugar.
+ *
+ * A mesma página dá a saída: "Solução - Remontar com um range maior". Por isso
+ * esta função devolve TAMBÉM a versão mais larga — não como conselho meu, mas
+ * porque é o que o material escreve ao lado do aviso.
+ *
+ * ---------------------------------------------------------------------------
+ * ISTO NÃO MANDA ELE FAZER NADA
+ *
+ * Devolve onde a faixa CAIRIA pela conta do material. O que fazer com isso é
+ * dele — a regra mais antiga deste projeto, e a que mais me custa lembrar
+ * quando a conta parece óbvia. */
+/* QUANTO O PAR ANDOU EM 7 DIAS — e a faixa aguenta isso?
+ *
+ * ---------------------------------------------------------------------------
+ * DE ONDE VEM A PERGUNTA
+ *
+ * Portal 5, na lista de como escolher uma pool (página 65): "Olhe a
+ * volatilidade semanal (7d)". E na página 88, a regra inteira em duas linhas:
+ *
+ *     "Ativos voláteis, range maior. Ativos menos voláteis, range menor."
+ *
+ * O material manda olhar e não diz como medir. A ESCOLHA DA MEDIDA É MINHA, e
+ * está marcada como minha — mas ela tem um motivo, e não é gosto.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE AMPLITUDE, E NÃO DESVIO-PADRÃO
+ *
+ * Desvio-padrão de retorno diário é a medida canônica de volatilidade, e aqui
+ * ela responderia a pergunta errada. A pergunta é "a minha faixa aguenta o que
+ * este par faz numa semana", e faixa não se rompe por desvio-padrão: rompe
+ * quando o preço ENCOSTA na borda. O que importa é o quanto o par andou de
+ * ponta a ponta.
+ *
+ * Então: (maior ÷ menor − 1), sobre os últimos 7 dias. É o mesmo tipo de
+ * número da largura da faixa, e por isso os dois dá pra comparar de bater o
+ * olho.
+ *
+ * ---------------------------------------------------------------------------
+ * O PAR, E NÃO OS DOIS TOKENS SEPARADOS
+ *
+ * Uma pool SOL/ETH não se importa com o preço do SOL em dólar: ela se importa
+ * com quantos ETH vale um SOL. Se os dois caírem 20% juntos, a RAZÃO não se
+ * mexeu e a faixa nem sentiu — que é exatamente o que o relatório de
+ * Impermanent Loss diz de outro jeito ("se eles andam colados, quase não
+ * existe IL").
+ *
+ * Medir os dois separados daria dois números grandes pra uma pool que não
+ * saiu do lugar. */
+export const DIAS_DA_VOLATILIDADE_MEU = 7;
+
+export function volatilidadeDoPar(precosA, precosB, dias = DIAS_DA_VOLATILIDADE_MEU) {
+  const a = (precosA || []).filter((v) => Number.isFinite(v) && v > 0);
+  const b = (precosB || []).filter((v) => Number.isFinite(v) && v > 0);
+  const n = Math.min(a.length, b.length);
+  if (n < 3) return null;
+
+  /* Alinhados pelo FIM: as duas séries podem ter começos diferentes (um token
+     mais novo que o outro), e parear pelo começo casaria o dia 1 de um com o
+     dia 30 do outro. */
+  const razoes = [];
+  for (let i = 0; i < n; i++) {
+    const ra = a[a.length - n + i], rb = b[b.length - n + i];
+    if (rb > 0) razoes.push(ra / rb);
+  }
+  if (razoes.length < 3) return null;
+
+  /* SETE DIAS SÃO SETE DIAS. A fonte devolve 8 pontos (pedi um a mais pra ter
+     a semana cheia mesmo com o ponto de hoje ainda aberto), e sem este corte a
+     tela dizia "o par andou 5,1% em 8 dias" debaixo de um título que promete
+     7. Número certo com nome errado é o tipo de detalhe que corrói a confiança
+     no resto da página. */
+  const janela = razoes.slice(-Math.max(3, dias));
+
+  const menor = Math.min(...janela);
+  const maior = Math.max(...janela);
+  if (!(menor > 0)) return null;
+
+  return {
+    dias: janela.length,
+    menor, maior,
+    agora: janela[janela.length - 1],
+    amplitudePct: (maior / menor - 1) * 100,
+  };
+}
+
+/* A faixa aguenta o que o par faz numa semana?
+ *
+ * Devolve os dois números lado a lado e uma leitura. NÃO diz o que fazer: a
+ * página 88 diz "ativos voláteis, range maior", e quanto maior é dele. */
+export function faixaContraVolatilidade(larguraPct, vol) {
+  if (!vol || !(larguraPct > 0)) return null;
+  const razao = vol.amplitudePct / larguraPct;
+  /* O 1,0 não é corte arbitrário: é o ponto em que o par anda, numa semana,
+     exatamente a largura inteira da faixa. Abaixo dele a semana típica cabe
+     dentro; acima, não cabe. */
+  const cabe = razao <= 1;
+  return {
+    larguraPct, amplitudePct: vol.amplitudePct, razao, cabe,
+    texto: "o par andou " + vol.amplitudePct.toFixed(1).replace(".", ",") +
+      "% em " + vol.dias + " dias, e a sua faixa tem " +
+      larguraPct.toFixed(1).replace(".", ",") + "% de largura — " +
+      (cabe
+        ? "uma semana como a última cabe dentro dela"
+        : "uma semana como a última não cabe dentro dela"),
+  };
+}
+
+export const REMONTAGEM_LARGA_MEU = 1.5;
+
+export function remontagem(precoAgora, minimo, maximo, vezesMaisLarga = REMONTAGEM_LARGA_MEU) {
+  const nums = [precoAgora, minimo, maximo];
+  if (nums.some((v) => v == null || !Number.isFinite(v) || v <= 0)) return null;
+  if (maximo <= minimo) return null;
+
+  /* Dentro da faixa não há o que remontar, e devolver uma conta aqui seria
+     responder uma pergunta que ninguém fez. */
+  if (precoAgora >= minimo && precoAgora <= maximo) return null;
+
+  const largura = maximo - minimo;
+  const porBaixo = precoAgora < minimo;
+
+  const novoMin = porBaixo ? precoAgora : precoAgora - largura;
+  const novoMax = porBaixo ? precoAgora + largura : precoAgora;
+
+  /* A versão mais larga cresce dos DOIS lados a partir da mesma borda: a
+     borda encostada no preço fica onde está (é ela que evita a troca), e a
+     outra se afasta. */
+  const larga = largura * vezesMaisLarga;
+  const largaMin = porBaixo ? precoAgora : precoAgora - larga;
+  const largaMax = porBaixo ? precoAgora + larga : precoAgora;
+
+  return {
+    porBaixo,
+    lado: porBaixo ? "baixo" : "cima",
+    largura,
+    /* A largura em % do preço é o número comparável entre pares: 0,09 numa
+       faixa de 1,12 e 400 dólares numa de 77.000 são a mesma coisa. */
+    larguraPct: (largura / precoAgora) * 100,
+    novoMin, novoMax,
+    largaMin, largaMax, vezesMaisLarga,
+  };
+}
+
 export function lerGiro(g) {
   if (g == null) return { nivel: "sem-dado", texto: "não dá pra medir o giro (a pool não informa volume)" };
   if (g >= GIRO.excelente) return { nivel: "excelente", texto: `gira ${g.toFixed(0)}x o próprio tamanho por semana` };

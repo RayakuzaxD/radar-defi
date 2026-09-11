@@ -19,6 +19,7 @@ import {
   precoDoBitcoin, estoqueGlobalDeStables, indicadoresDoCiclo,
   precoPorHora,
   juntarIndicadores, razaoEthBtc,
+  precosDaSemana,
 } from "./llama.js";
 import {
   regimeDePreco, fluxoDeCapital, idadeDoRegime, lerCiclo, cicloEfetivo,
@@ -42,7 +43,8 @@ import { dividirRedes, dividirPools, porqueDaRede, oQueMudou } from "./divisoes.
 import { separarPar, riscoDoPar } from "./rendimento.js";
 import {
   giro, lerGiro, faixaDeTaxa, lerFaixa, fichaDefiverso, porqueDefiverso,
-  multiplicador, cartazContraChao,
+  multiplicador, cartazContraChao, remontagem,
+  volatilidadeDoPar, faixaContraVolatilidade,
   passaNosPortoes, PORTOES, classificarToken,
 } from "./metodo.js";
 import {
@@ -1350,6 +1352,18 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
         [...pools.values()].flatMap((w) => [w.mintA, w.mintB]),
       ).catch(() => ({}));
 
+      /* SETE DIAS DE PREÇO DOS MESMOS TOKENS, pra saber quanto o PAR andou.
+       *
+       * Portal 5, página 65, na lista de como escolher uma pool: "olhe a
+       * volatilidade semanal (7d)". Página 88, a regra inteira: "ativos
+       * voláteis, range maior".
+       *
+       * Uma chamada só, com todos os mints juntos — e falhar aqui não derruba
+       * nada: sem a semana, a linha simplesmente não aparece. */
+      const semana = await precosDaSemana(
+        [...pools.values()].flatMap((w) => [w.mintA, w.mintB]),
+      ).catch(() => new Map());
+
       /* AS CONTAS DE TICK, que são o que falta pro rendimento.
        *
        * Cada ponta da faixa mora numa conta que guarda 88 ticks. O endereço
@@ -1447,6 +1461,19 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
           faixa: { fundo, topo },
           preco: q.preco,
           leitura: lerFaixaDaPosicao(q.preco, fundo, topo),
+          /* ONDE A FAIXA CAIRIA, pela conta do Portal 5 — e só quando a posição
+             saiu. Dentro da faixa `remontagem` devolve null, e null aqui vira
+             silêncio na tela: mostrar uma faixa nova pra uma posição que está
+             rendendo seria responder pergunta que ninguém fez. */
+          remontar: remontagem(q.preco, fundo, topo),
+          /* QUANTO O PAR ANDOU NA SEMANA, do lado da largura da faixa.
+             Os dois na mesma unidade (% ) justamente pra ele comparar de bater
+             o olho — que é o que a página 88 pede e não ensina a medir. */
+          volatilidade: (() => {
+            const vol = volatilidadeDoPar(semana.get(w.mintA), semana.get(w.mintB));
+            const larguraPct = fundo > 0 ? ((topo - fundo) / q.preco) * 100 : null;
+            return faixaContraVolatilidade(larguraPct, vol);
+          })(),
           qtdA: q.qtdA, qtdB: q.qtdB,
           mintA: w.mintA, mintB: w.mintB,
           simboloA: simboloDoMint(w.mintA), simboloB: simboloDoMint(w.mintB),
