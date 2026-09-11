@@ -2827,7 +2827,7 @@ export default {
         .map((x) => String(x || "").trim()).filter(Boolean).slice(0, 20);
       if (!simbolos.length) return Response.json({ series: {} });
 
-      const dias = Math.min(400, Math.max(2, Number(corpo?.dias) || 365));
+      const dias = Math.min(800, Math.max(2, Number(corpo?.dias) || 365));
       const series = await seriesDiarias(simbolos, dias, env.BANCO);
       return Response.json({ series, dias }, {
         /* Preço de ONTEM pra trás não muda mais. Meia hora de cache poupa uma

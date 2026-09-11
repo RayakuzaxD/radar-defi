@@ -191,7 +191,20 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
 
       if (entrou && entrou <= corte) {
         if (fechou && fechou <= corte) continue; // já não existia na data
-        total += v; // aberta na data: vale a entrada, a melhor medida que há
+
+        /* A ENTRADA MAIS O QUE ELE MEXEU DEPOIS. Ele aumenta pools e tira
+         * pedaços delas ("posso querer aumentar uma pool... posso retirar
+         * parte"), e o detector de mexida transforma isso em lançamento na
+         * chave da posição. Sem somá-los aqui, uma janela aberta DEPOIS do
+         * aporte partiria do valor de entrada velho e o aporte apareceria
+         * como valorização — o erro proibido, na casa das posições. */
+        let comMexidas = v;
+        for (const m of movs) {
+          const quando = soODia(m?.quando);
+          if (!quando || quando <= entrou || quando > corte) continue;
+          comMexidas += fluxoExterno(m);
+        }
+        total += Math.max(0, comMexidas);
         continue;
       }
 

@@ -312,6 +312,53 @@ titulo("ABRIR UMA POOL NÃO É LUCRO — o remanejamento fica invisível");
 }
 
 /* ------------------------------------------------------------------------ */
+titulo("AUMENTAR E RETIRAR DE POOL RENDE ZERO NO ATO");
+{
+  /* O pedido dele, palavra por palavra: "posso querer aumentar uma pool e não
+     pode entrar como valorização; posso retirar parte do dinheiro da pool e
+     não pode aparecer como prejuízo". O detector de mexida vira o depósito em
+     lançamento na chave da posição; a conta tem que honrá-lo.
+
+     Pool entrou dia 01 com 200. Dia 10, aporte de 50 lançado nela. */
+  const precoEm = () => 1;
+  const cambioEm = () => null;
+  const linhas = [{ chave: "pool", posicao: "P1", valor_entrada: 200,
+    data_entrada: "2026-08-01" }];
+  const movs = [{ chave: "pool", tipo: "aporte", valor_usd: 50, quando: "2026-08-10" }];
+  const em = (d) => valorNaData({ linhas, movimentos: movs, precoEm, cambioEm }, d);
+
+  conferir("antes do aporte a posição vale a entrada", perto(em("2026-08-05"), 200));
+  conferir("depois do aporte ela vale entrada + aporte", perto(em("2026-08-15"), 250));
+
+  /* A janela que ATRAVESSA o aporte: o fluxo neutraliza. */
+  const cruza = rendimentoDoPeriodo([
+    { dia: "2026-08-05", valor: em("2026-08-05"), fluxo: 0 },
+    { dia: "2026-08-15", valor: em("2026-08-15"), fluxo: 50 },
+  ]);
+  conferir("janela que cruza o aporte: rendimento zero", perto(cruza.lucro, 0));
+
+  /* E a janela ABERTA DEPOIS do aporte: parte do valor já aumentado — era
+     aqui que o aporte virava valorização antes deste bloco. */
+  const depois = rendimentoDoPeriodo([
+    { dia: "2026-08-15", valor: em("2026-08-15"), fluxo: 0 },
+    { dia: "2026-08-20", valor: em("2026-08-20"), fluxo: 0 },
+  ]);
+  conferir("janela aberta depois do aporte: zero também, não +50",
+    perto(depois.lucro, 0), String(depois.lucro));
+
+  /* O saque parcial, pelo mesmo caminho. */
+  const movs2 = [{ chave: "pool", tipo: "saque", valor_usd: 80, quando: "2026-08-10" }];
+  const em2 = (d) => valorNaData({ linhas, movimentos: movs2, precoEm, cambioEm }, d);
+  conferir("retirar 80 da pool derruba o valor dela pra 120", perto(em2("2026-08-15"), 120));
+  const saque = rendimentoDoPeriodo([
+    { dia: "2026-08-05", valor: em2("2026-08-05"), fluxo: 0 },
+    { dia: "2026-08-15", valor: em2("2026-08-15"), fluxo: -80 },
+  ]);
+  conferir("e a retirada não aparece como prejuízo", perto(saque.lucro, 0),
+    String(saque.lucro));
+}
+
+/* ------------------------------------------------------------------------ */
 titulo("O LUCRO DESDE O COMEÇO, que não precisa de história");
 {
   const movs = [

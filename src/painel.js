@@ -3102,7 +3102,20 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
 
       if (entrou && entrou <= corte) {
         if (fechou && fechou <= corte) continue; // já não existia na data
-        total += v; // aberta na data: vale a entrada, a melhor medida que há
+
+        /* A ENTRADA MAIS O QUE ELE MEXEU DEPOIS. Ele aumenta pools e tira
+         * pedaços delas ("posso querer aumentar uma pool... posso retirar
+         * parte"), e o detector de mexida transforma isso em lançamento na
+         * chave da posição. Sem somá-los aqui, uma janela aberta DEPOIS do
+         * aporte partiria do valor de entrada velho e o aporte apareceria
+         * como valorização — o erro proibido, na casa das posições. */
+        let comMexidas = v;
+        for (const m of movs) {
+          const quando = soODia(m?.quando);
+          if (!quando || quando <= entrou || quando > corte) continue;
+          comMexidas += fluxoExterno(m);
+        }
+        total += Math.max(0, comMexidas);
         continue;
       }
 
@@ -3275,6 +3288,12 @@ var serieBuscando = false;
 
 function pedirSeriesDePrecos() {
   if (serieBuscando || serieDePrecos) return;
+  /* SO DEPOIS DOS LANCAMENTOS: a janela de busca e medida pelo lancamento
+     mais velho, e pedir antes deles chegarem gravaria uma serie curta demais
+     no cache — foi assim que a conta dele apareceu "incompleta" sem motivo
+     visivel: o primeiro aporte e de fev/2025 e a serie parava 370 dias
+     atras. */
+  if (!movsCarregados) return;
   var tokens = {};
   (fatias || []).forEach(function (f) {
     if (f.token) tokens[String(f.token).toUpperCase()] = 1;
@@ -3282,6 +3301,19 @@ function pedirSeriesDePrecos() {
   });
   var lista = Object.keys(tokens);
   if (!lista.length) return;
+
+  var maisVelho = null;
+  Object.keys(movimentos).forEach(function (k) {
+    movimentos[k].forEach(function (m) {
+      var d = String(m.quando || "").slice(0, 10);
+      if (d && (!maisVelho || d < maisVelho)) maisVelho = d;
+    });
+  });
+  var dias = 370;
+  if (maisVelho) {
+    var idade = Math.ceil((Date.now() - Date.parse(maisVelho + "T00:00:00Z")) / 86400000);
+    dias = Math.min(790, Math.max(370, idade + 10));
+  }
   serieBuscando = true;
   fetch("/api/historico?v=${VERSAO}", {
     method: "POST",
@@ -3289,7 +3321,7 @@ function pedirSeriesDePrecos() {
     /* So os SIMBOLOS viajam — nunca quantidade nem valor. E por POST: a lista
        de simbolos e a composicao da carteira dele, e composicao nao vai em
        URL, que fica em log. */
-    body: JSON.stringify({ tokens: lista, dias: 370 }),
+    body: JSON.stringify({ tokens: lista, dias: dias }),
   }).then(function (r) { return r.json(); }).then(function (j) {
     serieDePrecos = (j && j.series) || {};
     serieBuscando = false;
@@ -3359,11 +3391,32 @@ function lucroDaLinha(l) {
     if (l.emUSD == null || !isFinite(l.emUSD)) return null;
     var entrada = Number(l.f.valor_entrada);
     if (!isFinite(entrada)) return null;
-    var descoberta = Math.max(0, entrada - Math.max(0, custoLancado));
-    /* O lucro da posicao e o vivo acima da entrada — o que ELA rendeu. A
+
+    /* AS MEXIDAS DEPOIS DA ENTRADA MUDAM A BASE. Ele aumenta pools e tira
+       pedacos ("posso querer aumentar uma pool e nao pode entrar como
+       valorizacao; posso retirar parte e nao pode aparecer como prejuizo").
+       O detector de mexida vira isso em lancamento na chave da posicao — e
+       aqui o aporte de depois soma na base e o saque desconta, entao a
+       mexida rende exatamente zero no ato.
+
+       Lancamento DO DIA DA ENTRADA e outra coisa: e o proprio capital de
+       abertura (o registro de capital novo), ja dentro do valor_entrada.
+       Soma-lo de novo cobraria o mesmo dinheiro duas vezes. */
+    var entrou = String(l.f.data_entrada || "").slice(0, 10);
+    var mexidasDepois = 0, aportadoNaEntrada = 0;
+    movsDaqui.forEach(function (m) {
+      var f = fluxoExterno(m);
+      if (!f) return;
+      var quando = String(m.quando || "").slice(0, 10);
+      if (entrou && quando > entrou) mexidasDepois += f;
+      else if (f > 0) aportadoNaEntrada += f;
+    });
+    var base = Math.max(0, entrada + mexidasDepois);
+    var descoberta = Math.max(0, entrada - aportadoNaEntrada);
+    /* O lucro da posicao e o vivo acima da base — o que ELA rendeu. A
        entrada em si ou veio de dentro (custo ja nas linhas de origem) ou e
        capital novo sem lancamento (a parte descoberta, custo aqui). */
-    return { lucro: l.emUSD - entrada, semHistoria: descoberta, custo: entrada };
+    return { lucro: l.emUSD - base, semHistoria: descoberta, custo: base };
   }
 
   if (l.f.token && l.f.quantidade != null) {
@@ -3395,8 +3448,43 @@ function lucroDaLinha(l) {
         if (d > vespera && mexeNaQuantidade(m) && !(precoEm(l.f.token, d) > 0)) precosOk = false;
       });
       if (!precosOk) return null;
-      return { lucro: l.emUSD - custoLancado, semHistoria: 0,
-        custo: Math.max(0, custoLancado) };
+
+      /* O CUSTO ACOMPANHA A MOEDA QUE SAIU — o conserto de um vermelho
+       * fantasma que ele mesmo pegou olhando a Base solida.
+       *
+       * A primeira versao fazia lucro = valor de hoje − custo lancado
+       * INTEIRO. So que parte das moedas lancadas SAIU da linha (virou pool):
+       * o valor delas vive em outra caixinha, e a posicao que as recebeu ja
+       * carrega o proprio custo (a entrada descoberta). Cobrar o custo cheio
+       * aqui era cobrar o mesmo dinheiro duas vezes — a Base dele mostrava
+       * "perdendo 437" quando o bitcoin tinha caido 244: os outros 194 eram
+       * os 0,0025 BTC que moravam nas pools, cobrados como se tivessem
+       * evaporado.
+       *
+       * Entao o custo se reparte pela QUANTIDADE: a parte que ficou paga a
+       * fatia dela do custo; a parte que saiu leva o custo junto e e a
+       * posicao de destino quem responde por ele dali em diante. O que este
+       * corte deixa de fora — a variacao da moeda entre a compra e o dia de
+       * virar pool — e pequeno e fica dito aqui em vez de escondido. */
+      var qtdLancada = 0;
+      var conversaoOk = true;
+      movsDaqui.forEach(function (m) {
+        var sentido = m.tipo === "saque" ? -1 : 1;
+        var qm = Number(m.qtd_a);
+        if (isFinite(qm) && qm > 0) { qtdLancada += sentido * qm; return; }
+        var usd = mexeNaQuantidade(m);
+        if (!usd) return;
+        var d = String(m.quando || "").slice(0, 10);
+        var p = precoEm(l.f.token, d);
+        if (!(p > 0)) { conversaoOk = false; return; }
+        qtdLancada += usd / p;
+      });
+      if (!conversaoOk || !(qtdLancada > 0)) return null;
+      var parteQueFicou = Math.max(0, Math.min(1, qtd / qtdLancada));
+      var custoQueFica = Math.max(0, custoLancado) * parteQueFicou;
+      return { lucro: l.emUSD - custoQueFica, semHistoria: 0,
+        custo: custoQueFica,
+        virouPool: Math.max(0, custoLancado) - custoQueFica };
     }
     var semHist = resto > qtd * 0.001 ? l.emUSD * (resto / qtd) : 0;
     return { lucro: l.emUSD - custoLancado - semHist, semHistoria: semHist,
@@ -3449,6 +3537,88 @@ function fraseDoLucro(v, custo) {
      toda sem historia) a porcentagem nao existe e nao se inventa. */
   if (custo >= 1) texto += " · " + umPct((v / custo) * 100);
   return '<span class="' + classeDoSinal(v) + '">' + texto + '</span>';
+}
+
+/* O VALOR DE UMA LINHA SO numa data — a mesma conta do valorNaData, fatiada,
+ * pra responder a pergunta que ele fez olhando o -107 de 24 horas: "da onde?".
+ * As regras sao as mesmas da conta total, linha a linha; a soma das fatias e o
+ * total por construcao. O parametro ehHoje liga o valor vivo da posicao. */
+function valorDaLinhaEm(l, diaAlvo, ehHoje) {
+  if (!l || !l.f) return null;
+  var movsDaqui = (l.f.chave && movimentos[l.f.chave]) || [];
+
+  if (l.f.posicao) {
+    var entrou = String(l.f.data_entrada || "").slice(0, 10);
+    var fechou = String(l.f.fechada_em || "").slice(0, 10);
+    var entrada = Number(l.f.valor_entrada);
+    if (!isFinite(entrada)) return null;
+    if (entrou && entrou <= diaAlvo) {
+      if (fechou && fechou <= diaAlvo) return 0;
+      if (ehHoje && l.emUSD != null && isFinite(l.emUSD)) return l.emUSD;
+      /* A mesma regra do modulo: a entrada mais as mexidas lancadas ate a
+         data. Sem isso, uma janela aberta depois de um aporte na pool
+         partiria do valor velho e o aporte viraria valorizacao. */
+      var comMexidas = entrada;
+      movsDaqui.forEach(function (m) {
+        var quando = String(m.quando || "").slice(0, 10);
+        if (!quando || quando <= entrou || quando > diaAlvo) return;
+        comMexidas += fluxoExterno(m);
+      });
+      return Math.max(0, comMexidas);
+    }
+    if (fechou) return 0;
+    var deFora = 0;
+    movsDaqui.forEach(function (m) {
+      var quando = String(m.quando || "").slice(0, 10);
+      if (!quando || quando <= diaAlvo) return;
+      var f = fluxoExterno(m);
+      if (f > 0) deFora += f;
+    });
+    return Math.max(0, entrada - deFora);
+  }
+
+  if (l.f.token && l.f.quantidade != null) {
+    var q = quantidadeNaData(l.f.quantidade, movsDaqui, function (d) {
+      return precoEm(l.f.token, d);
+    }, diaAlvo);
+    if (q == null) return null;
+    var p = precoEm(l.f.token, diaAlvo);
+    if (!(p > 0)) return null;
+    return q * p;
+  }
+
+  if (l.f.valor != null) {
+    var vv = Number(l.f.valor);
+    if (!isFinite(vv)) return null;
+    if (l.f.moeda === "BRL") {
+      var cx = cambioEm(diaAlvo);
+      return cx > 0 ? vv * cx : null;
+    }
+    return vv;
+  }
+  return 0;
+}
+
+/* De onde veio o ganho ou a perda de uma janela: a contribuicao de cada
+ * linha, maiores primeiro. So os que passam de um dolar — centavo nao explica
+ * nada. */
+function deOndeVeio(c, diaInicio, diaFim) {
+  var pedacos = [];
+  (c && c.linhas || []).forEach(function (l) {
+    var v0 = valorDaLinhaEm(l, diaInicio, false);
+    var v1 = valorDaLinhaEm(l, diaFim, true);
+    if (v0 == null || v1 == null) return;
+    var fluxo = 0;
+    ((l.f.chave && movimentos[l.f.chave]) || []).forEach(function (m) {
+      var quando = String(m.quando || "").slice(0, 10);
+      if (quando > diaInicio && quando <= diaFim) fluxo += fluxoExterno(m);
+    });
+    var lucro = v1 - v0 - fluxo;
+    if (Math.abs(lucro) < 1) return;
+    pedacos.push({ nome: String(l.f.fatia || l.f.token || "posição"), lucro: lucro });
+  });
+  pedacos.sort(function (a, b) { return Math.abs(b.lucro) - Math.abs(a.lucro); });
+  return pedacos;
 }
 
 function blocoDoRendimento(c) {
@@ -3533,9 +3703,30 @@ function blocoDoRendimento(c) {
         '</span><b class="vazio2">sem preço de algum dia</b></div>';
       return;
     }
+    /* A PORCENTAGEM E SOBRE O PATRIMONIO INTEIRO, e nao sobre a conta
+       encadeada — pedido dele olhando a tela: "preciso saber quanto ganhei e
+       quanto perdi EM RELACAO AO TOTAL do meu patrimonio". Perder 107 num
+       patrimonio de 2.400 e -4,5%, e e esse numero que conversa com o valor
+       grande la de cima. */
+    var sobreOTotal = r.fim > 0 ? (r.lucro / r.fim) * 100 : null;
     linhasHtml += '<div class="fatoLinha"><span>' + j.nome + '</span>' +
       '<b class="' + classeDoSinal(r.lucro) + '">' + maisMenos(r.lucro) +
-      ' · ' + umPct(r.pct) + '</b></div>';
+      (sobreOTotal != null ? ' · ' + umPct(sobreOTotal) + ' do total' : '') + '</b></div>';
+
+    /* "EU PERDI 100 DOLS EM 24HRS? DA ONDE?" — a pergunta dele, respondida
+       na propria linha: as maiores contribuicoes da janela, com sinal. Fica
+       fora do modo privado: nomear as partes com valores e exatamente o que o
+       modo esconde. */
+    if (!privado && Math.abs(r.lucro) >= 1) {
+      var partes = deOndeVeio(c, r.deQuando, r.ateQuando);
+      if (partes.length) {
+        var mostradas = partes.slice(0, 3).map(function (p) {
+          return esc(p.nome) + " " + maisMenos(p.lucro);
+        }).join(" · ");
+        linhasHtml += '<div class="fatoNota">de onde: ' + mostradas +
+          (partes.length > 3 ? ' · e mais ' + (partes.length - 3) : '') + '</div>';
+      }
+    }
   });
 
   /* O RESUMO QUE ELE PEDIU, na terceira volta desta caixa: "quero so o total
@@ -8159,14 +8350,21 @@ function secaoDaCaixa(cx, d, c) {
        negativo ou positivo". A mesma conta do resumo, fatiada por caixa. */
     (function () {
       if (!serieDePrecos) { pedirSeriesDePrecos(); return ""; }
-      var soma = 0, custoCx = 0, achou = false, incompleta = false;
+      var soma = 0, custoCx = 0, saiu = 0, achou = false, incompleta = false;
       d.linhas.forEach(function (l) {
         var r = lucroDaLinha(l);
         if (r == null) { incompleta = true; return; }
-        soma += r.lucro; custoCx += r.custo; achou = true;
+        soma += r.lucro; custoCx += r.custo;
+        if (r.virouPool) saiu += r.virouPool;
+        achou = true;
       });
       if (!achou || incompleta) return "";
-      return '<div class="cxSoma cxLucro">' + fraseDoLucro(soma, custoCx) + '</div>';
+      return '<div class="cxSoma cxLucro">' + fraseDoLucro(soma, custoCx) +
+        (saiu >= 1
+          ? ' <span class="onde">· ' +
+            (privado ? "US$ " + TAPADO : dinheiroNa(saiu, "USD")) +
+            ' desta caixinha viraram pool</span>'
+          : "") + '</div>';
     })() +
     (fechada ? "" : corpo) +
   '</div>';
