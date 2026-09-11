@@ -511,6 +511,10 @@ export function paginaDoPainel() {
   .fatoNota { color: var(--fraco); font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
   /* O bloco do dinheiro DELE, destacado do bloco do mercado: são duas coisas
      diferentes na mesma caixa, e o olho precisa saber onde uma acaba. */
+  .patTotal { font-size: 24px; font-weight: 750; letter-spacing: .01em;
+    font-variant-numeric: tabular-nums; margin: 2px 0 6px; }
+  .impMeio { font-size: 12px; font-weight: 650; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--fraco); margin: 10px 0 2px; }
   .fatoSeu { margin-top: 10px; padding: 8px 10px; border-radius: 10px;
     background: var(--novoBg); }
   .fatoSeu .fatoLinha:first-child { border-top: none; }
@@ -3307,11 +3311,25 @@ function pertoDoDia(porDia, dia, folga) {
 
 function blocoDoRendimento(c) {
   if (!fatias || !fatias.length || !movsCarregados) return "";
+  /* O TOTAL ABRE A CAIXA, nas duas versoes dela. Pedido dele em 11/09/2026:
+     "faltou um resumo do patrimonio total". Ele existia, mas so como letra
+     miuda no meio da pizza — e a pergunta que se faz ao abrir a aba e "quanto
+     eu tenho", antes de "quanto rendeu". O numero e o MESMO que a pizza usa
+     (c.total, na moeda que ele escolheu): dois totais diferentes na mesma
+     tela seria pedir pra desconfiar dos dois. */
+  var cabecaDoTotal =
+    '<div class="impCabeca">Seu patrimônio</div>' +
+    '<div class="patTotal">' +
+      (c && c.total > 0 ? esc(dinheiroNa(c.total, moedaVista)) : "—") + '</div>' +
+    ((c && c.foraDaConta)
+      ? '<div class="fatoNota">' + c.foraDaConta +
+        ' linha(s) ainda sem valor lido ficaram de fora do total</div>'
+      : "");
+
   if (!serieDePrecos) {
     pedirSeriesDePrecos();
-    return '<div class="resumoCaixa">' +
-      '<div class="impCabeca">O que rendeu</div>' +
-      '<div class="fatoNota">medindo — buscando o preço de cada dia…</div>' +
+    return '<div class="resumoCaixa">' + cabecaDoTotal +
+      '<div class="fatoNota">medindo o rendimento — buscando o preço de cada dia…</div>' +
     '</div>';
   }
 
@@ -3462,8 +3480,8 @@ function blocoDoRendimento(c) {
     if (d && (!primeiroDia || d < primeiroDia)) primeiroDia = d;
   });
 
-  return '<div class="resumoCaixa">' +
-    '<div class="impCabeca">O que rendeu</div>' +
+  return '<div class="resumoCaixa">' + cabecaDoTotal +
+    '<div class="impMeio">O que rendeu</div>' +
     '<div class="lcDica">Aporte não conta como rendimento: ele entra na conta a partir ' +
       'da data em que foi lançado. Saque não conta como prejuízo. A conta é feita aqui ' +
       'no seu navegador — quantidade e valor não saem da sua sessão.</div>' +
