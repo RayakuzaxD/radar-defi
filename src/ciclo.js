@@ -304,12 +304,38 @@ export function fluxoDeCapital(estoques, lim = CICLO) {
  * devolvia "indefinido" com o preço em repique e o capital parado — quando a
  * leitura honesta é bear. A correção veio do Rayakuza em 08/09/2026, e conferi a
  * tese dele antes de aceitar: média longa caindo, topos e fundos descendentes. */
+/* NAO EXISTE CICLO INDEFINIDO, e isto e um conserto de conceito.
+ *
+ * Ele disse, em 11/09/2026: "o ciclo ou e bear ou bull, nao existe o ciclo
+ * indefinido certo? e vc ta usando muito isso no radar".
+ *
+ * Esta certo, e o erro era meu de nomear. O mercado ESTA em bear ou em bull.
+ * "Indefinido" nunca foi um estado do mercado: era o MEU estado, "nao consigo
+ * dizer qual". Por na tela como se fosse um terceiro ciclo troca o mapa pelo
+ * territorio — e quem le passa a achar que existe um lugar onde o mercado nao
+ * esta em lado nenhum.
+ *
+ * PIOR: o radar ja tratava tudo como bear em seguida. `cicloParaMeta` mapeava
+ * indefinido pra bear com um comentario dizendo isso. O terceiro ciclo so
+ * existia na tela — e existia o bastante pra causar um estrago de verdade.
+ *
+ * O ESTRAGO: o botao "usar referencia" preenche os alvos da carteira com a
+ * divisao do ciclo. Com o ciclo "indefinido", a funcao da referencia nao
+ * achava divisao nenhuma e caia numa neutra (50/20/15/10/5), enquanto a tela
+ * logo acima dizia "trato como bear". Ele clicou esperando o 60/25 de bear,
+ * recebeu a neutra, salvou, e os alvos dele foram sobrescritos. Duas partes do
+ * programa lendo a mesma palavra de dois jeitos.
+ *
+ * AGORA: o ciclo e sempre "bear" ou "bull". Quando as medidas nao concordam,
+ * vale BEAR — o lado conservador — e a leitura carrega `semConsenso: true`.
+ * A duvida continua visivel, e continua sendo dita na tela; o que ela deixa de
+ * ser e um ciclo. */
 export function lerCiclo(preco, capital) {
   const porque = [preco?.texto, capital?.texto].filter(Boolean);
   const lado = ladoDoRegime(preco?.estado);
 
   if (preco?.estado === "sem-dado" && capital?.estado === "sem-dado") {
-    return { ciclo: "indefinido", firmeza: "sem dado nenhum", porque };
+    return { ciclo: "bear", semConsenso: true, firmeza: "sem dado nenhum", porque };
   }
 
   if (lado === "alta") {
@@ -317,7 +343,7 @@ export function lerCiclo(preco, capital) {
       return { ciclo: "bull", firmeza: "estrutura de alta e capital entrando", porque };
     }
     return {
-      ciclo: "indefinido",
+      ciclo: "bear", semConsenso: true,
       firmeza: "o preço virou, o capital ainda não confirmou",
       porque,
     };
@@ -326,7 +352,7 @@ export function lerCiclo(preco, capital) {
   if (lado === "baixa") {
     if (capital?.estado === "entrando") {
       return {
-        ciclo: "indefinido",
+        ciclo: "bear", semConsenso: true,
         firmeza: "o capital está entrando, mas a tendência longa ainda desce",
         porque,
       };
@@ -343,7 +369,7 @@ export function lerCiclo(preco, capital) {
     };
   }
 
-  return { ciclo: "indefinido", firmeza: "sem direção clara no preço", porque };
+  return { ciclo: "bear", semConsenso: true, firmeza: "sem direção clara no preço", porque };
 }
 
 /* Qual ciclo vale, considerando o que o Rayakuza escolheu.
@@ -351,7 +377,24 @@ export function lerCiclo(preco, capital) {
  * `escolhido` vem do banco: "bull", "bear" ou "auto" (o padrão). A leitura
  * automática nunca sobrepõe a escolha dele — se sobrepusesse, o botão seria
  * decorativo. */
-export function cicloEfetivo(escolhido, leitura) {
+/* LEITURA VELHA, TRADUZIDA NA ENTRADA.
+ *
+ * O ciclo fica guardado no banco, e as leituras gravadas antes de 11/09/2026
+ * dizem "indefinido" — um estado que o programa nao produz mais. Sem traduzir,
+ * a tela continuaria mostrando "Ciclo indefinido" ate a proxima rodada, e o
+ * botao da referencia continuaria preenchendo a divisao neutra. Ou seja: o
+ * conserto ficaria pronto e sem efeito, esperando o relogio.
+ *
+ * Traduzir na LEITURA, e nao no banco: ninguem precisa migrar nada, e um dado
+ * de ontem passa a ser lido com o entendimento de hoje. Se um dia sobrar um
+ * "indefinido" perdido em qualquer lugar, ele continua virando bear aqui. */
+function semIndefinido(leitura) {
+  if (!leitura || leitura.ciclo !== "indefinido") return leitura;
+  return { ...leitura, ciclo: "bear", semConsenso: true };
+}
+
+export function cicloEfetivo(escolhido, leituraCrua) {
+  const leitura = semIndefinido(leituraCrua);
   if (escolhido === "bull" || escolhido === "bear") {
     return {
       ciclo: escolhido,
@@ -359,27 +402,31 @@ export function cicloEfetivo(escolhido, leitura) {
       // A leitura continua aparecendo mesmo contrariada: é assim que ele
       // percebe que a escolha envelheceu.
       leitura,
-      discorda: leitura?.ciclo && leitura.ciclo !== "indefinido" && leitura.ciclo !== escolhido,
+      /* So acusa divergencia quando a medida TEM consenso. Cutucar ele por
+         discordar de uma leitura que o proprio radar nao sustenta seria
+         transformar duvida minha em cobranca. */
+      discorda: !!leitura?.ciclo && !leitura.semConsenso && leitura.ciclo !== escolhido,
       texto: `Ciclo: ${escolhido} — definido por você.`,
     };
   }
-  const c = leitura?.ciclo || "indefinido";
+  const c = leitura?.ciclo || "bear";
   return {
     ciclo: c,
     origem: "medido",
     leitura,
     discorda: false,
-    texto: c === "indefinido"
-      ? `Ciclo indefinido — ${leitura?.firmeza || "sem leitura"}. Tratando como bear até você definir, que é o lado conservador.`
+    texto: leitura?.semConsenso
+      ? `Mercado ${c} — as duas medidas ainda não concordam (${leitura?.firmeza || "sem leitura"}), e enquanto não concordam vale o lado conservador.`
       : `Ciclo: ${c} — ${leitura?.firmeza}.`,
   };
 }
 
-/* A meta mensal que vale.
+/* O lado que vale, por nome.
  *
- * Vive aqui e não em metodo.js porque depende do ciclo, e metodo.js não sabe
- * nada sobre ciclo — ele recebe o nome pronto. "indefinido" cai no bear pelo
- * motivo escrito em lerCiclo. */
+ * Continua existindo por seguranca, e agora quase sempre devolve o que
+ * recebeu: desde que "indefinido" deixou de existir, o ciclo ja chega bear ou
+ * bull. Ela guarda o caso de alguem passar uma palavra estranha — e a escolha
+ * dela, nesse caso, e a conservadora. */
 export function cicloParaMeta(ciclo) {
   return ciclo === "bull" ? "bull" : "bear";
 }

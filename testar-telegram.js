@@ -31,8 +31,12 @@ const doBanco = (escolhido, leitura) => {
   };
 };
 
+/* A massa do caso real de 06/09: o preco virou pra cima e o capital nao
+   confirmou. Isso NAO e um terceiro ciclo — e bear (o lado conservador) com a
+   falta de consenso dita. A massa mudou junto com o conceito; deixa-la em
+   "indefinido" seria testar contra um estado que o programa nao produz mais. */
 const LEITURA_HOJE = {
-  ciclo: "indefinido",
+  ciclo: "bear", semConsenso: true,
   firmeza: "o preço virou, o capital ainda não confirmou",
   porque: [
     "Bitcoin 14.6% acima da média de 200 dias",
@@ -56,9 +60,12 @@ titulo("O texto do ciclo diz a meta, que é o número que muda a decisão");
      Ela citava um documento que não existe (veja metodo.js). O que continua
      valendo é que "indefinido" não pode ficar sozinho: a mensagem tem que
      dizer qual lado está sendo usado enquanto ele não decide. */
-  conferir("indefinido não fica sozinho: diz qual lado está valendo",
-    /tratando como bear/i.test(t),
-    "'indefinido' sem mais nada é uma palavra que não muda nada do que ele faz");
+  /* Nao ha mais "indefinido": ha bear com a duvida dita. O que continua
+     importando e que a duvida NAO suma — dizer "bear" com a mesma firmeza de
+     quando as medidas concordam seria esconder a diferenca que importa. */
+  conferir("a dúvida é dita, e o lado também",
+    /não concordam/i.test(t) && /bear/i.test(t),
+    "dizer bear com a mesma firmeza dos dois casos apagaria a diferença");
   conferir("os dois eixos aparecem", t.includes("Bitcoin 14.6%") && t.includes("stablecoin +1.5%"));
   conferir("a idade do regime aparece", t.includes("19 dias"),
     "regime de 19 dias e de 8 meses não valem o mesmo");

@@ -2416,7 +2416,11 @@ function desenharCiclo() {
   const c = dados && dados.ciclo;
   if (!c) { alvo.innerHTML = ""; return; }
 
-  const nome = c.ciclo === "indefinido" ? "Ciclo indefinido" : "Mercado " + c.ciclo;
+  /* SEMPRE "Mercado bear" ou "Mercado bull". Nunca "Ciclo indefinido": esse
+     terceiro estado nao existe no mercado, so existia na minha leitura. Quando
+     as medidas nao concordam, o texto abaixo diz isso — e o titulo continua
+     dizendo em que lado se esta operando. */
+  const nome = "Mercado " + c.ciclo;
   const eixos = (c.leitura && c.leitura.porque) || [];
   const dias = c.leitura && c.leitura.diasNoRegime;
 

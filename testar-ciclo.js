@@ -193,20 +193,37 @@ conferir("bear + saindo = bear", lerCiclo(preco("bear"), capital("saindo")).cicl
 
 {
   const r = lerCiclo(preco("bull"), capital("parado"));
-  conferir("bull + parado = INDEFINIDO (o caso real de 06/09/2026)", r.ciclo === "indefinido",
-    "uma fórmula que sempre devolve resposta esconderia exatamente este caso");
+  /* ERA "= INDEFINIDO". Nao existe ciclo indefinido: o mercado esta em bear
+     ou em bull, e "nao sei qual" era o MEU estado, nao o dele. O que este
+     teste sempre quis guardar continua guardado, e ate melhor — que o caso
+     real de 06/09 seja RECONHECIDO como falta de consenso, em vez de virar um
+     veredito confiante. */
+  conferir("bull + parado = bear, marcado como sem consenso (o caso real de 06/09/2026)",
+    r.ciclo === "bear" && r.semConsenso === true,
+    "uma fórmula que sempre devolve resposta confiante esconderia este caso");
   conferir("e a firmeza nomeia o que está acontecendo",
     r.firmeza === "o preço virou, o capital ainda não confirmou");
 }
 
 {
   const r = lerCiclo(preco("bear"), capital("entrando"));
-  conferir("bear + entrando = indefinido, com o motivo do outro lado",
-    r.ciclo === "indefinido" && r.firmeza.includes("capital está entrando"));
+  conferir("bear + entrando = bear sem consenso, com o motivo do outro lado",
+    r.ciclo === "bear" && r.semConsenso === true && r.firmeza.includes("capital está entrando"));
 }
 
-conferir("neutro + entrando = indefinido", lerCiclo(preco("neutro"), capital("entrando")).ciclo === "indefinido");
-conferir("bull + sem-dado = indefinido", lerCiclo(preco("bull"), capital("sem-dado")).ciclo === "indefinido");
+{
+  const a = lerCiclo(preco("neutro"), capital("entrando"));
+  conferir("neutro + entrando = bear sem consenso", a.ciclo === "bear" && a.semConsenso === true);
+  const b = lerCiclo(preco("bull"), capital("sem-dado"));
+  conferir("bull + sem-dado = bear sem consenso", b.ciclo === "bear" && b.semConsenso === true);
+
+  /* E O CONTRARIO TEM QUE VALER: quando as duas concordam, NAO ha bandeira.
+     Sem esta conferencia, marcar semConsenso em tudo passaria no teste — e a
+     bandeira que vale sempre nao informa nada. */
+  const firme = lerCiclo(preco("bull"), capital("entrando"));
+  conferir("bull + entrando = bull, sem bandeira nenhuma",
+    firme.ciclo === "bull" && !firme.semConsenso);
+}
 conferir("os dois eixos entram no 'porque'",
   lerCiclo(preco("bull"), capital("parado")).porque.length === 2,
   "o veredito sozinho é palavra que se aceita; os dois eixos são medida que se confere");
@@ -215,15 +232,15 @@ conferir("os dois eixos entram no 'porque'",
 titulo("A escolha do Rayakuza manda — o botão não pode ser decorativo");
 
 {
-  const leitura = lerCiclo(preco("bull"), capital("parado")); // indefinido
+  const leitura = lerCiclo(preco("bull"), capital("parado")); // bear, sem consenso
   const auto = cicloEfetivo("auto", leitura);
-  conferir("em 'auto' vale a medida", auto.ciclo === "indefinido" && auto.origem === "medido");
+  conferir("em 'auto' vale a medida", auto.ciclo === "bear" && auto.origem === "medido");
   /* Era "a meta de bear está valendo" — a meta saiu do radar (veja metodo.js:
      ela citava um documento que nao existe). O que continua importando e que
      'indefinido' nao fique sozinho: o texto tem que dizer qual lado esta sendo
      usado enquanto ele nao decide. */
-  conferir("e o texto avisa qual lado está valendo enquanto ele não decide",
-    /tratando como bear/i.test(auto.texto), auto.texto.slice(0, 90));
+  conferir("e o texto diz que as medidas ainda não concordam",
+    /não concordam/i.test(auto.texto) && /bear/i.test(auto.texto), auto.texto.slice(0, 100));
 
   const dele = cicloEfetivo("bull", leitura);
   conferir("'bull' escolhido sobrepõe a medida", dele.ciclo === "bull" && dele.origem === "escolhido");
@@ -245,8 +262,9 @@ titulo("A escolha do Rayakuza manda — o botão não pode ser decorativo");
 
 conferir("valor estranho no banco cai em 'auto', não quebra",
   cicloEfetivo("talvez", null).origem === "medido");
-conferir("sem leitura nenhuma o ciclo é indefinido",
-  cicloEfetivo("auto", null).ciclo === "indefinido");
+/* Sem leitura nenhuma vale o lado conservador, e nao um terceiro estado. */
+conferir("sem leitura nenhuma vale bear",
+  cicloEfetivo("auto", null).ciclo === "bear");
 
 // ---------------------------------------------------------------------------
 titulo("A meta que sai do ciclo");
