@@ -5969,14 +5969,49 @@ function mudancaDeTamanho(antes, pos) {
   if (n1 === n0) return null;
 
   var cresceu = n1 > n0;
-  var valor = Number(pos.valor);
-  if (!isFinite(valor) || !(valor > 0) || n1 === 0n) {
-    /* Fechou a posicao: o tamanho foi a zero e nao ha valor de que tirar a
-       regra de tres. O valor guardado da ultima olhada e a melhor resposta. */
+  var fechou = n1 === 0n;
+
+  /* O VALOR SO CONTA SE ESTIVER EM DOLAR — e este portao chegou tarde.
+   *
+   * Quando falta cotacao de um dos lados, o valor da posicao sai na moeda B:
+   * numa SOL/ETH isso e ETH, nao dolar. A baseDeEntrada ja recusava esse
+   * numero pra base de entrada desde o susto dos "+240756%", mas o tamanho
+   * guardado continuava recebendo o numero cru.
+   *
+   * O estrago apareceu ao desmontar: o saque foi lancado como US$ 0,04, que
+   * eram 0,042 ETH. A conta do patrimonio leu 105 dolares evaporando e pintou
+   * a carteira de vermelho — desmontar pool virou prejuizo. Quem viu foi ele:
+   * "esse sol eth na orca nao perdi tudo, eu desmontei um pool".
+   *
+   * O VALOR GUARDADO HERDA A DUVIDA. Ele foi gravado pelo mesmo caminho, na
+   * mesma unidade — entao quando a leitura de hoje declara que nao esta em
+   * dolar, o numero de ontem tambem nao estava. Nao ha como saber a unidade
+   * de um numero ja gravado; da pra saber que ela e suspeita, e isso basta
+   * pra nao afirmar. */
+  var emDolar = pos.unidade == null || pos.unidade === "USD";
+  var valorAgora = emDolarOuNada(pos);
+  var valorAntes = emDolar ? Number(antes.valor) : NaN;
+  var guardadoVale = isFinite(valorAntes) && valorAntes > 0;
+
+  if (fechou) {
+    /* Fechou: o tamanho foi a zero e nao ha valor de que tirar a regra de
+       tres. O valor guardado da ultima olhada e a melhor resposta — quando
+       ele vale. */
     return {
       tipo: "saque", fechou: true,
-      quanto: Number(antes.valor) || null,
+      quanto: guardadoVale ? valorAntes : null,
+      semValor: !guardadoVale,
       tamanho: t1,
+    };
+  }
+
+  /* Mexeu, mas nao da pra dizer quanto em dolar. NULL vira pergunta aberta na
+     tela em vez de numero errado: melhor pedir quanto entrou do que afirmar
+     quatro centavos. */
+  if (!isFinite(valorAgora) || !(valorAgora > 0)) {
+    return {
+      tipo: cresceu ? "aporte" : "saque",
+      fechou: false, quanto: null, semValor: true, tamanho: t1,
     };
   }
 
@@ -5996,14 +6031,28 @@ function mudancaDeTamanho(antes, pos) {
    * Orca passa de 10^18, e dividir dois inteiros desse tamanho ja convertidos
    * perderia justamente os digitos que interessam. */
   var razao = Number((n1 > n0 ? n1 - n0 : n0 - n1) * 1000000n / n1) / 1000000;
-  var quanto = valor * razao;
 
   return {
     tipo: cresceu ? "aporte" : "saque",
     fechou: false,
-    quanto: Math.abs(quanto),
+    quanto: Math.abs(valorAgora * razao),
+    semValor: false,
     tamanho: t1,
   };
+}
+
+/* O valor da posicao, mas so quando ele esta em dolar.
+ *
+ * Mesmo portao da baseDeEntrada, e de proposito: quem le um valor de posicao
+ * pra virar dinheiro passa por aqui, sempre. Sem o campo de unidade e leitura
+ * antiga (emprestimo, e tudo anterior ao campo existir), e essas sempre foram
+ * dolar. */
+function emDolarOuNada(pos) {
+  if (!pos) return null;
+  var v = Number(pos.valor);
+  if (!isFinite(v) || !(v > 0)) return null;
+  if (pos.unidade != null && pos.unidade !== "USD") return null;
+  return v;
 }
 
 /* Le os tamanhos guardados e compara com o que a cadeia diz agora.
@@ -6041,7 +6090,7 @@ async function olharTamanhos() {
 
     if (!antes) {
       /* Primeira vez que vejo esta posicao: anota e nao pergunta nada. */
-      await anotarTamanho(f.chave, pos.tamanho, pos.valor);
+      await anotarTamanho(f.chave, pos.tamanho, emDolarOuNada(pos));
       continue;
     }
 
@@ -6066,6 +6115,10 @@ function anotarTamanho(chaveDaLinha, tamanho, valor) {
 function confirmarMudanca(f) {
   var m = mudancas[f.chave];
   if (!m || mudancaOcupada) return;
+  /* Sem valor em dolar nao ha o que lancar. O botao nem aparece nesse caso
+     (a tela pede o numero a ele), mas a guarda fica: um lancamento de zero
+     seria pior que lancamento nenhum. */
+  if (m.quanto == null || !isFinite(m.quanto)) return;
   mudancaOcupada = f.chave;
   desenhar();
 
@@ -7621,6 +7674,31 @@ function perguntaDeMudanca(f) {
   var m = mudancas[f.chave];
   if (!m) return "";
   var ocupado = mudancaOcupada === f.chave;
+
+  /* SEM VALOR EM DOLAR, A TELA PERGUNTA QUANTO — nao afirma um numero.
+   *
+   * Quando falta cotacao de um dos lados, o valor da posicao sai na moeda B
+   * (numa SOL/ETH, em ETH). Antes deste caso a tela dizia "esta posicao foi
+   * FECHADA, o ultimo valor que li foi US$ 0,04" e o botao lancava os quatro
+   * centavos — e 105 dolares sumiam da conta do patrimonio.
+   *
+   * O botao de confirmar so existe quando ha numero pra confirmar. Sem ele, o
+   * caminho e o extrato, onde ele digita o valor que voltou. Uma pergunta sem
+   * resposta pronta da mais trabalho que um botao; um botao que lanca o numero
+   * errado da MUITO mais. */
+  if (m.semValor || m.quanto == null) {
+    return '<div class="mudanca2">' +
+      '<div class="mudTxt">Esta posição ' +
+        (m.fechou ? "foi FECHADA" : (m.tipo === "aporte" ? "CRESCEU" : "DIMINUIU")) +
+        ", mas eu não consigo dizer quanto em dólar: falta a cotação de um dos " +
+        "tokens do par, e sem ela o valor sai na moeda do outro lado.</div>" +
+      '<div class="mudNota">Lance o valor no extrato abaixo — é o número que ' +
+        (m.fechou ? "voltou pra sua carteira" : "você mexeu") + '.</div>' +
+      '<div class="mudBotoes">' +
+        '<button class="btMudNao" data-chave="' + esc(f.chave) + '">entendi</button>' +
+      "</div>" +
+    "</div>";
+  }
 
   var frase = m.fechou
     ? "Esta posição foi FECHADA. O último valor que li foi " + dinheiroMiudo(m.quanto, "USD") + "."

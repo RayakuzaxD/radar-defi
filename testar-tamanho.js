@@ -42,8 +42,13 @@ function pegarFuncao(fonte, nome) {
 }
 
 const fonte = readFileSync("src/painel.js", "utf8");
+/* `emDolarOuNada` vem junto: a conta passou a depender dela pra recusar valor
+   que não está em dólar, e arrancar só a função de cima deixaria o teste
+   quebrado por falta de peça — não por defeito. */
 const { mudancaDeTamanho } = new Function(
-  `${pegarFuncao(fonte, "mudancaDeTamanho")} return { mudancaDeTamanho: mudancaDeTamanho };`
+  `${pegarFuncao(fonte, "emDolarOuNada")}
+   ${pegarFuncao(fonte, "mudancaDeTamanho")}
+   return { mudancaDeTamanho: mudancaDeTamanho };`
 )();
 
 const perto = (a, b, tol) => Math.abs(a - b) < tol;
@@ -166,6 +171,43 @@ titulo("Números grandes: os dígitos finais são os que importam");
     mudancaDeTamanho({ tamanho: a, valor: 100 }, { tamanho: b, valor: 100 }) !== null);
   conferir("e tamanhos idênticos continuam sem disparar",
     mudancaDeTamanho({ tamanho: a, valor: 100 }, { tamanho: a, valor: 100 }) === null);
+}
+
+// ---------------------------------------------------------------------------
+titulo("O VALOR SÓ VALE SE ESTIVER EM DÓLAR");
+
+{
+  /* O caso que quebrou de verdade: uma posição de par volátil foi desmontada e
+     o saque saiu lançado como US$ 0,04 — que eram 0,042342 ETH. O valor de uma
+     posição sai na moeda B quando falta cotação de um dos lados, e num par
+     SOL/ETH a moeda B é ETH. A conta do patrimônio leu ~105 dólares evaporando
+     e pintou a carteira de vermelho: desmontar pool virou prejuízo.
+
+     É o mesmo erro que já tinha custado um "+240 mil por cento" numa base de
+     entrada guardada em ETH. O portão existia; faltava aplicá-lo aqui. */
+  const antes = { tamanho: "1000000", valor: 0.042342 };   // gravado em ETH
+  const pos = { tamanho: "0", valor: 0, unidade: "ETH" };
+
+  const m = mudancaDeTamanho(antes, pos);
+  conferir("percebe que a posição fechou", m !== null && m.fechou === true);
+  conferir("mas NÃO afirma que voltaram 4 centavos",
+    !(m.quanto > 0 && m.quanto < 1), `disse US$ ${m.quanto}`);
+
+  const emOutra = mudancaDeTamanho(
+    { tamanho: "1000000", valor: 0.042 },
+    { tamanho: "2000000", valor: 0.084, unidade: "ETH" },
+  );
+  conferir("posição em outra unidade não vira estimativa em dólar",
+    emOutra === null || emOutra.quanto == null, JSON.stringify(emOutra));
+
+  /* Sem o campo, é leitura antiga — e essas sempre foram dólar. O teste existe
+     pra o portão não apagar o que funcionava. */
+  const semCampo = mudancaDeTamanho(
+    { tamanho: "1000000", valor: 10 },
+    { tamanho: "2000000", valor: 20 },
+  );
+  conferir("leitura antiga, sem o campo de unidade, continua valendo",
+    semCampo && perto(semCampo.quanto, 10, 0.01), JSON.stringify(semCampo));
 }
 
 console.log("\n" + "-".repeat(60));
