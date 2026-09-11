@@ -200,6 +200,47 @@ CREATE TABLE IF NOT EXISTS medida_piscina (
 CREATE INDEX IF NOT EXISTS medida_por_classe ON medida_piscina (dia, classe, chao DESC);
 CREATE INDEX IF NOT EXISTS medida_por_rede ON medida_piscina (dia, rede, chao DESC);
 
+-- O FLUXO DIÁRIO DOS ETFs DE BITCOIN À VISTA, em milhões de dólares.
+--
+-- Capital de OUTRA gente: enquanto o estoque de stablecoins mede dinheiro que
+-- já está dentro do mundo cripto trocando de lugar, isto mede dinheiro
+-- entrando e saindo pela porta da frente, de quem compra numa corretora de
+-- ações. Por isso é um eixo novo, e não outra medida do mesmo eixo.
+--
+-- A fonte entrega a SÉRIE INTEIRA a cada chamada, não só o dia. Então a rodada
+-- regrava as últimas semanas toda vez, e isso é de propósito: dia perdido por
+-- rodada que falhou se conserta sozinho na rodada seguinte, e correção que a
+-- fonte faça num dia velho chega junto.
+--
+-- Nada pessoal: é o fluxo público dos ETFs, igual pra todo mundo.
+CREATE TABLE IF NOT EXISTS etf_fluxo (
+  dia        TEXT PRIMARY KEY,   -- 'AAAA-MM-DD', o dia de pregão nos EUA
+  total      REAL NOT NULL,      -- milhões de dólares; negativo é saída
+  por_fundo  TEXT                -- JSON: quanto de cada ETF
+);
+
+-- QUANTO BITCOIN AS EMPRESAS ABERTAS GUARDAM, uma foto por dia.
+--
+-- Existe porque o FLUXO DOS ETFs não tem fonte livre legível por máquina — a
+-- lista do que eu tentei está no cabeçalho de src/tesouraria.js, pra ninguém
+-- refazer a busca. Esta é a medida do mesmo assunto que funciona de graça, e
+-- ela é do Módulo 5.
+--
+-- A fonte entrega só o TOTAL de hoje. O fluxo é a subtração entre as fotos, e
+-- por isso a tabela guarda em vez de calcular na hora — mesmo motivo de
+-- `fotos`: mercado se remede, passado não.
+--
+-- Nada pessoal aqui: é quanto bitcoin a Strategy e mais 179 empresas de
+-- capital ABERTO declararam ter. Número público, igual pra todo mundo.
+CREATE TABLE IF NOT EXISTS tesouraria (
+  dia         TEXT PRIMARY KEY,   -- 'AAAA-MM-DD', sempre em Brasília
+  total_btc   REAL NOT NULL,
+  total_usd   REAL,
+  dominancia  REAL,               -- % da capitalização do bitcoin
+  empresas    INTEGER,
+  maiores     TEXT                -- JSON: as cinco maiores, nome e quantidade
+);
+
 -- As pools em que o Rayakuza JÁ ESTÁ.
 --
 -- O resto do banco guarda o mercado; esta tabela guarda a POSIÇÃO dele. A

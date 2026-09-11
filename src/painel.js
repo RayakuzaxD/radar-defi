@@ -156,7 +156,13 @@ export function paginaDoPainel() {
     background: var(--avisoBg); border-radius: 7px; padding: 8px 10px; }
 
   /* O Bitcoin: gráfico, régua da faixa e alvos de preço. */
-  .btcCartao .numeros { margin-top: 0; }
+  /* CINCO CELULAS, E NAO QUATRO. O resto do painel usa quatro fixas; aqui a
+     do fluxo dos ETFs entrou e a quinta caia sozinha numa linha nova, com cara
+     de sobra. O auto-fit resolve nos dois tamanhos sem media query: no
+     computador as cinco cabem lado a lado, no celular quebram 3 e 2 — que e
+     equilibrado, enquanto 4 e 1 e um orfao. */
+  .btcCartao .numeros { margin-top: 0;
+    grid-template-columns: repeat(auto-fit, minmax(102px, 1fr)); }
   .macroTopo { width: 100%; background: transparent; border: 0; padding: 0;
                font: inherit; color: inherit; cursor: pointer; text-align: left;
                display: flex; align-items: center; gap: 8px; }
@@ -967,6 +973,21 @@ const esc = (t) => String(t ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<"
 
 let dados = null, aba = "hoje";
 
+/* O fluxo dos ETFs como celula da grade do bitcoin.
+ *
+ * Devolve "" sem dado, e uma celula a menos e melhor que uma celula com traco:
+ * a grade se fecha sozinha e ninguem fica olhando pra um buraco perguntando o
+ * que deveria estar ali. */
+function etfNaSemana() {
+  var e = dados && dados.etf;
+  if (!e || !isFinite(e.semana)) return "";
+  var n = Math.abs(e.semana), sinal = e.semana < 0 ? "−" : "+";
+  var v = n >= 1000
+    ? sinal + "$" + (n / 1000).toFixed(1).replace(".", ",") + "b"
+    : sinal + "$" + Math.round(n) + "m";
+  return celula("ETFs · 7d", v, e.semana >= 0 ? "sobe" : "desce");
+}
+
 function celula(rot, valor, classe = "", destaque = false) {
   return '<div class="num' + (destaque ? " destaque" : "") + (valor === "—" ? " vazio2" : "") + '">' +
     '<div class="numRot">' + rot + '</div>' +
@@ -1740,6 +1761,17 @@ function blocoDoBitcoin() {
     celula("desse lado há",
       l.diasNoRegime != null ? l.diasNoRegime + "d"
       : (l.diasQueEnxergo > 0 ? l.diasQueEnxergo + "+ d" : "—")) +
+    /* O DINHEIRO DE FORA, na mesma grade do preço.
+     *
+     * Está aqui, e não escondido numa aba, porque é o único número deste bloco
+     * que não vem do gráfico: as outras quatro células são o preço olhando pra
+     * si mesmo, e esta diz quem está comprando. É o eixo de capital que faltava
+     * no destaque.
+     *
+     * A SEMANA, e não o dia. Os ETFs alternam entrada e saída o tempo todo e
+     * fim de semana nem existe na série — uma célula com o dia daria uma
+     * virada de mercado por semana. */
+    etfNaSemana() +
   '</div>';
 
   /* DE QUANDO E CADA NUMERO. Sem esta linha o bloco inteiro parece ter a mesma
@@ -3352,6 +3384,8 @@ function blocoDoCiclo() {
     (l.capital && l.capital.texto
       ? '<div class="fatoNota">' + esc(l.capital.texto) + '</div>' : "") +
 
+    linhaDosEtfs() +
+
     (meu
       ? '<div class="fatoSeu">' +
           '<div class="fatoLinha"><span>Seu preço médio</span><b>' +
@@ -3363,6 +3397,51 @@ function blocoDoCiclo() {
 
     '<div class="fatoQuando">medido em ' + esc(c.medidoEm || (dados && dados.dia) || "—") + '</div>' +
   '</div>';
+}
+
+/* O DINHEIRO QUE ENTRA PELA PORTA DA FRENTE.
+ *
+ * Mora dentro do bloco do ciclo porque e o MESMO assunto que as outras linhas
+ * dali: para onde o capital esta indo. A diferenca e de quem e o dinheiro — o
+ * estoque de stablecoins mede quem ja esta dentro do mundo cripto trocando de
+ * lugar, e o ETF mede quem compra bitcoin numa corretora de acoes e talvez nem
+ * saiba o que e uma carteira.
+ *
+ * A SEMANA E O NUMERO, O DIA E CONTEXTO. Os ETFs alternam entrada e saida o
+ * tempo todo e fim de semana nem existe na serie; ler um dia como direcao
+ * daria uma virada de mercado por semana.
+ *
+ * A SEQUENCIA APARECE SO QUANDO HA SEQUENCIA (tres dias ou mais). Cinco saidas
+ * seguidas dizem algo que a soma esconde — e "1 dia seguido" nao diz nada e so
+ * ocuparia linha.
+ *
+ * E NAO HA VEREDITO AQUI. Entrada forte de ETF ja foi topo e ja foi comeco de
+ * alta; quem diz qual e o caso e ele. */
+function linhaDosEtfs() {
+  var e = dados && dados.etf;
+  if (!e || !isFinite(e.semana)) return "";
+  /* A fonte da em milhoes. Mil milhoes viram bilhao aqui porque "US$ 1.840 mi"
+     obriga a pessoa a fazer a conta de cabeca pra entender o tamanho — e o
+     tamanho e justamente o que esta linha quer dizer. */
+  var milhoes = function (v) {
+    var sinal = v < 0 ? "-" : "+", n = Math.abs(v);
+    if (n >= 1000) {
+      return sinal + "US$ " + (n / 1000).toLocaleString("pt-BR",
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " bi";
+    }
+    return sinal + "US$ " + n.toLocaleString("pt-BR", { maximumFractionDigits: 0 }) + " mi";
+  };
+  return '<div class="fatoLinha"><span>ETFs de bitcoin, na semana</span><b class="' +
+      classeDoSinal(e.semana) + '">' + esc(milhoes(e.semana)) + '</b></div>' +
+    '<div class="fatoNota">' +
+      'Dinheiro de fora entrando ou saindo pela porta da frente. ' +
+      'No último dia medido (' + esc(e.ultimoDia || "—") + '), ' +
+      esc(milhoes(e.ultimo)) + '.' +
+      (e.seguidos >= 3
+        ? ' São ' + e.seguidos + ' dias seguidos ' +
+          (e.direcaoDoUltimo === "saindo" ? "de saída" : "de entrada") + '.'
+        : "") +
+    '</div>';
 }
 
 /* A REDE onde o dinheiro dele mora. */

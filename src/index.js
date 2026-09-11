@@ -21,6 +21,8 @@ import {
   juntarIndicadores, razaoEthBtc,
   precosDaSemana,
 } from "./llama.js";
+import { tesourariasDeBitcoin, fluxoDasTesourarias } from "./tesouraria.js";
+import { fluxoDosEtfs, lerFluxoDosEtfs } from "./etf.js";
 import {
   regimeDePreco, fluxoDeCapital, idadeDoRegime, lerCiclo, cicloEfetivo,
   cicloParaMeta, posicaoNoCiclo, lerPosicao, reduzirSerie, mediaMovel, CICLO,
@@ -793,6 +795,14 @@ async function montarRadar(env) {
    * do relógio (`medirOCiclo`); aqui só se lê o que ela deixou guardado. */
   const ciclo = await cicloDoBanco(env);
 
+  /* O FLUXO DOS ETFs, do banco. A rodada do relogio busca e guarda; aqui so se
+     le. E um eixo de capital NOVO: o estoque de stablecoins mede dinheiro que
+     ja esta dentro do mundo cripto trocando de lugar, e isto mede dinheiro
+     entrando e saindo pela porta da frente. */
+  const etf = await env.BANCO.prepare(
+    "SELECT dia, total FROM etf_fluxo ORDER BY dia DESC LIMIT 7",
+  ).all().then((r) => lerFluxoDosEtfs(r?.results || [])).catch(() => null);
+
   /* Ordenado pelo GIRO, não pelo chão.
    *
    * A regra do 3 do Módulo 8 é "TVL baixo, volume alto" — e é isso que decide
@@ -956,6 +966,7 @@ async function montarRadar(env) {
     dia: dia || r.dia,
     diaDasRedes: r.dia,
     ciclo,
+    etf,
     dolar,
     /* A referência do B.A.R.C.A. vai junto do radar, já ajustada ao ciclo que
      * está valendo. É REFERÊNCIA e não alvo: o autor do método diz na aula que
@@ -1037,6 +1048,38 @@ export async function medirQualidade(env, dia, protocolos, redes) {
   // em cima dela. Custa zero chamada de rede: o APY de hoje já veio acima.
   await acrescentarPontoDoDia(env, dia, piscinas);
   await medirPiscinas(env, dia, piscinas);
+
+  /* A FOTO DE HOJE DAS TESOURARIAS. Uma chamada, e falhar não derruba a
+     rodada: sem a foto de hoje o fluxo simplesmente pula um dia, que é bem
+     melhor do que a rodada inteira morrer por causa de um número secundário. */
+  try {
+    const t = await tesourariasDeBitcoin(env.COINGECKO_KEY || null);
+    if (t && !t.erro) {
+      await env.BANCO.prepare(
+        `INSERT OR REPLACE INTO tesouraria
+           (dia, total_btc, total_usd, dominancia, empresas, maiores)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(dia, t.totalBtc, t.totalUsd, t.dominancia, t.quantasEmpresas,
+        JSON.stringify(t.maiores || [])).run();
+    }
+  } catch { /* idem: um número secundário não derruba a rodada */ }
+
+  /* O FLUXO DOS ETFs. A fonte entrega a serie inteira, entao regravo as
+     ultimas semanas em vez de so o dia: dia perdido numa rodada que falhou se
+     conserta sozinho na proxima, e correcao da fonte num dia velho chega
+     junto. Falhar aqui nao derruba a rodada. */
+  try {
+    const f = await fluxoDosEtfs();
+    if (f && !f.erro && f.dias?.length) {
+      const decl = env.BANCO.prepare(
+        "INSERT OR REPLACE INTO etf_fluxo (dia, total, por_fundo) VALUES (?, ?, ?)");
+      const recentes = f.dias.filter((d) => Number.isFinite(d.total)).slice(0, 40);
+      for (let i = 0; i < recentes.length; i += 20) {
+        await env.BANCO.batch(recentes.slice(i, i + 20).map((d) =>
+          decl.bind(d.dia, d.total, JSON.stringify(d.porFundo || {}))));
+      }
+    }
+  } catch { /* um eixo a menos hoje nao vale derrubar a rodada inteira */ }
 
   const deTaxa = await taxasDosProtocolos();
   const apelidos = aprenderApelidos(deTaxa, oficiais);
@@ -3254,6 +3297,48 @@ export default {
      *
      * Esta rota nao adivinha: ela PERGUNTA a cada host e diz o que voltou.
      * Sem isso eu ficaria trocando cabecalho no escuro. */
+    /* O FLUXO DOS ETFs: o que a FONTE diz, o que o BANCO guardou, e a leitura.
+     *
+     * Esta rota nasceu de uma pergunta que eu tinha respondido errado. Testando
+     * do computador do Rayakuza, o Farside devolve 403 e eu ja tinha escrito que
+     * fluxo de ETF nao tem fonte livre. Perguntando DO WORKER, com o radar se
+     * apresentando no cabecalho, ele devolve 200 e 684 dias de serie.
+     *
+     * Por isso ela mostra os dois lados: fonte e banco lado a lado, pra
+     * discordancia entre eles aparecer em vez de virar um numero errado
+     * calado na tela. */
+    if (url.pathname === "/saude/etf") {
+      const g = await env.BANCO.prepare(
+        "SELECT dia, total FROM etf_fluxo ORDER BY dia DESC LIMIT 10").all().catch(() => null);
+      const agora = await fluxoDosEtfs().catch((e) => ({ erro: String(e?.message || e).slice(0, 90) }));
+      /* `?dias=N` devolve a serie recente da FONTE, e nao do banco. Serve pra
+         comparar as duas quando uma delas parecer errada — e foi assim que o
+         banco foi semeado da primeira vez, antes da primeira rodada. */
+      const quantos = Math.min(60, Math.max(0, Number(url.searchParams.get("dias") || 0)));
+      return Response.json({
+        fonte: agora?.erro ? agora : { dias: agora.dias.length, ultimo: agora.dias[0] },
+        serie: quantos && agora?.dias ? agora.dias.slice(0, quantos) : undefined,
+        leitura: agora?.dias ? lerFluxoDosEtfs(agora.dias) : null,
+        guardado: g?.results || [],
+      }, { headers: { "cache-control": "no-store" } });
+    }
+
+    if (url.pathname === "/saude/tesouraria") {
+      const agora = await tesourariasDeBitcoin(env.COINGECKO_KEY || null)
+        .catch((e) => ({ erro: String(e?.message || e).slice(0, 90) }));
+      const guardado = await env.BANCO.prepare(
+        "SELECT dia, total_btc FROM tesouraria ORDER BY dia DESC LIMIT 8").all().catch(() => null);
+      return Response.json({
+        agora,
+        /* Nunca houve chave, e a rota diz isso de proposito: o 403 que me fez
+           quase pedir uma era falta de cabecalho de identificacao, nao falta
+           de chave. Ver o comentario de src/tesouraria.js. */
+        temChave: !!env.COINGECKO_KEY,
+        guardado: guardado?.results || [],
+      },
+        { headers: { "cache-control": "no-store" } });
+    }
+
     if (url.pathname === "/saude/macro") {
       const alvos = {
         blsCpi: ["https://api.bls.gov/publicAPI/v1/timeseries/data/", {
