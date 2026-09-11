@@ -66,6 +66,83 @@ export function simboloDoMint(mint) {
   return SIMBOLOS_CONHECIDOS[mint] || String(mint || "").slice(0, 4);
 }
 
+/* O QUE CUSTA UMA TRANSAÇÃO NA ORCA, HOJE.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE ISTO EXISTE
+ *
+ * O relatório "APR vs APY" (Defiverso, julho/2026, p.5): "cada reinvestimento
+ * paga taxa de rede. Em posições pequenas, reinvestir todo dia pode custar
+ * mais do que o ganho extra". Pra saber se custa, tem que medir quanto custa.
+ *
+ * ---------------------------------------------------------------------------
+ * OS TRÊS PEDAÇOS
+ *
+ *   1. a taxa base: 5.000 lamports por assinatura, e isso é regra da rede;
+ *   2. a taxa de prioridade: micro-lamports por unidade de computação, que
+ *      muda minuto a minuto e vem da própria rede, por chamada;
+ *   3. quantas unidades de computação uma coleta gasta.
+ *
+ * O (3) NÃO VEM DE CHUTE. Medido em 11/09/2026, nas 19 transações bem-sucedidas
+ * mais recentes do programa da Orca: mediana de 55.678 unidades, com mínimo de
+ * 16.695 e máximo de 397.141. A taxa efetivamente paga nessas mesmas 19 teve
+ * mediana de 7.011 lamports — que é o número contra o qual esta conta se
+ * confere, e confere.
+ *
+ * A CAUDA É GORDA, e por isso a ordem de grandeza é o que vale aqui: a maior
+ * das 19 pagou 731.940 lamports, cem vezes a mediana. Um número destes na tela
+ * tem que vir dito como estimativa, nunca como preço. */
+export const UNIDADES_DE_UMA_COLETA_MEDIDO = 55678;
+export const TAXA_BASE_LAMPORTS = 5000;
+export const LAMPORTS_POR_SOL = 1e9;
+
+export function custoDeUmaColeta({
+  microLamportsPorUnidade = 0,
+  unidades = UNIDADES_DE_UMA_COLETA_MEDIDO,
+  assinaturas = 1,
+  precoDoSol = null,
+} = {}) {
+  const base = TAXA_BASE_LAMPORTS * Math.max(1, assinaturas);
+  const prioridade = Math.max(0, microLamportsPorUnidade) * unidades / 1e6;
+  const lamports = base + prioridade;
+  const sol = lamports / LAMPORTS_POR_SOL;
+  return {
+    lamports, sol,
+    dolar: precoDoSol > 0 ? sol * precoDoSol : null,
+    unidades, assinaturas, microLamportsPorUnidade,
+  };
+}
+
+/* A taxa de prioridade que a rede está cobrando AGORA, em quem mexe na Orca.
+ *
+ * Uma chamada só, e o que ela devolve são as últimas ~150 fatias de bloco. Uso
+ * a MEDIANA e não a média: medido em 11/09/2026, a mediana era 0 e o máximo
+ * 3.999.360 — uma média aqui seria puxada por um outlier em quatro mil vezes e
+ * diria que a rede está cara quando ela está de graça. */
+/* O programa vem de FORA e não tem padrão de propósito: PROGRAMA_ORCA mora em
+   orca.js, que importa daqui — dar o padrão aqui fecharia o ciclo entre os dois
+   arquivos por uma constante de uma linha. */
+export async function prioridadeAgora(nos, programa) {
+  if (!programa) return null;
+  for (const no of nos || []) {
+    try {
+      const r = await fetch(no, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1,
+          method: "getRecentPrioritizationFees", params: [[programa]],
+        }),
+      });
+      const j = await r.json();
+      const v = (j?.result || []).map((x) => Number(x?.prioritizationFee))
+        .filter((x) => Number.isFinite(x) && x >= 0).sort((a, b) => a - b);
+      if (!v.length) continue;
+      return { mediana: v[Math.floor(v.length / 2)], amostras: v.length };
+    } catch { /* nó ruim não derruba: o próximo tenta */ }
+  }
+  return null;
+}
+
 const ALFABETO58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 export function deBase58(texto) {

@@ -45,6 +45,7 @@ import {
   giro, lerGiro, faixaDeTaxa, lerFaixa, fichaDefiverso, porqueDefiverso,
   multiplicador, cartazContraChao, remontagem,
   volatilidadeDoPar, faixaContraVolatilidade,
+  recolherVale,
   passaNosPortoes, PORTOES, classificarToken,
 } from "./metodo.js";
 import {
@@ -100,6 +101,7 @@ import {
 import {
   contasEmLote, casasDosTokens, simboloDoMint,
   deBase58, enderecoDerivado, tokensDaCarteira, NOS,
+  custoDeUmaColeta, prioridadeAgora, MINT_DO_SOL,
 } from "./solana.js";
 import {
   lerObrigacao, lerReserva, valorDoDeposito, cambioDaReserva,
@@ -1360,6 +1362,18 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
        *
        * Uma chamada só, com todos os mints juntos — e falhar aqui não derruba
        * nada: sem a semana, a linha simplesmente não aparece. */
+      /* O QUE CUSTA RECOLHER, hoje, nesta rede.
+       *
+       * Relatório "APR vs APY" (Defiverso, julho/2026, p.5): "cada
+       * reinvestimento paga taxa de rede. Em posições pequenas, reinvestir
+       * todo dia pode custar mais do que o ganho extra".
+       *
+       * Uma chamada só, e ela pergunta à rede — não a mim. Falhando, a
+       * prioridade fica em zero e sobra a taxa base, que é regra da rede e
+       * não muda: o pior caso é subestimar num dia de congestionamento, e a
+       * tela diz que é estimativa. */
+      const prioridade = await prioridadeAgora(nos, PROGRAMA_ORCA).catch(() => null);
+
       const semana = await precosDaSemana(
         [...pools.values()].flatMap((w) => [w.mintA, w.mintB]),
       ).catch(() => new Map());
@@ -1511,6 +1525,30 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
                  dele. A conta antiga (lado A pelo preço do par, lado B como
                  stable) só valia quando B era stablecoin. */
               emDolar: (tA != null && tB != null) ? (tA + tB) : (r.qtdA * q.preco + r.qtdB),
+            };
+          })(),
+          /* E QUANTO CUSTA IR BUSCAR, do lado do que há pra buscar.
+             A comparação que ele pediu ao perguntar "cadê as taxas
+             acumuladas": o número sozinho não diz se vale a viagem. */
+          coleta: (() => {
+            const c = custoDeUmaColeta({
+              microLamportsPorUnidade: prioridade?.mediana || 0,
+              precoDoSol: cotacoes[MINT_DO_SOL]?.preco || null,
+            });
+            /* E A COMPARACAO PRONTA, so quando ela tem o que comparar.
+               `recolherVale` devolve null sem custo em dolar, e null aqui vira
+               silencio: a tela mostra as taxas e para. */
+            const t = (() => {
+              const tk = ticksDaPosicao.get(endereco);
+              if (!tk || !tk.fundo || !tk.topo) return null;
+              const rr = taxasNaoColhidas(p, w, tk.fundo, tk.topo, casasA, casasB);
+              if (!rr) return null;
+              const a = emDolar(rr.qtdA, w.mintA), b = emDolar(rr.qtdB, w.mintB);
+              return (a != null && b != null) ? (a + b) : null;
+            })();
+            return {
+              sol: c.sol, dolar: c.dolar, estimado: true,
+              vale: (t != null && c.dolar > 0) ? recolherVale(t, c.dolar) : null,
             };
           })(),
         };

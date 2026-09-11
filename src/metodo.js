@@ -252,6 +252,103 @@ export function cartazContraChao(chao, cartaz, vezes = CARTAZ_INFLADO_MEU) {
  * Devolve onde a faixa CAIRIA pela conta do material. O que fazer com isso é
  * dele — a regra mais antiga deste projeto, e a que mais me custa lembrar
  * quando a conta parece óbvia. */
+/* RECOLHER CUSTA. E O QUE HÁ PRA RECOLHER PAGA ISSO?
+ *
+ * ---------------------------------------------------------------------------
+ * A REGRA, do relatório "APR vs APY" (Defiverso, julho/2026), página 5, item 4
+ *
+ *   "Custos de reinvestir contam — Se o protocolo mostra APR e você quer
+ *    transformar isso em APY na mão, lembre que cada reinvestimento paga taxa
+ *    de rede. Em posições pequenas, reinvestir todo dia pode custar mais do
+ *    que o ganho extra."
+ *
+ * A frase que importa é a última, e ela é uma CONTA, não um conselho: o ganho
+ * extra de compor mais vezes contra o custo de compor mais vezes.
+ *
+ * ---------------------------------------------------------------------------
+ * O QUE ESTÁ EM JOGO NÃO É A TAXA INTEIRA
+ *
+ * Este é o erro fácil, e eu quase o cometi: comparar as taxas acumuladas com o
+ * custo de recolher. Errado — as taxas vão ser recolhidas de um jeito ou de
+ * outro, nem que seja ao fechar a posição. O que a frequência compra é só o
+ * JURO SOBRE O JURO. É esse pedacinho que tem de pagar a taxa de rede.
+ *
+ * Por isso a conta é  V × ((1 + r/n)^n − 1 − r)  contra  n × custo.
+ *
+ * ---------------------------------------------------------------------------
+ * O GABARITO É DELES
+ *
+ * A página 3 do mesmo relatório traz a tabela fechada, com US$ 1.000 a 10%:
+ *
+ *   nenhuma composição   US$ 1.100,00   APY 10,00%
+ *   mensal               US$ 1.104,71   APY 10,47%
+ *   semanal              US$ 1.105,06   APY 10,51%
+ *   diária               US$ 1.105,16   APY 10,52%
+ *
+ * São esses quatro números que o teste guarda. */
+export const COLETAS_POR_ANO = [
+  { n: 1, nome: "uma vez no ano" },
+  { n: 12, nome: "uma vez por mês" },
+  { n: 52, nome: "uma vez por semana" },
+  { n: 365, nome: "todo dia" },
+];
+
+export function aprParaApy(aprPct, vezesPorAno) {
+  if (!Number.isFinite(aprPct) || !Number.isFinite(vezesPorAno)) return null;
+  if (vezesPorAno < 1) return null;
+  const r = aprPct / 100;
+  return (Math.pow(1 + r / vezesPorAno, vezesPorAno) - 1) * 100;
+}
+
+/* De quanto em quanto tempo recolher compensa, com ESTE tamanho de posição e
+ * ESTE custo de rede.
+ *
+ * Devolve a tabela inteira, e não só a vencedora. A tabela é o que mostra POR
+ * QUE uma ganhou — e quando as quatro linhas ficam quase empatadas, ver isso
+ * vale mais do que receber uma resposta única com cara de certeza. */
+export function quandoRecolher({ valor, aprPct, custoPorColeta }) {
+  if (!(valor > 0) || !Number.isFinite(aprPct) || aprPct <= 0) return null;
+  if (!Number.isFinite(custoPorColeta) || custoPorColeta < 0) return null;
+
+  const r = aprPct / 100;
+  const simples = valor * r;
+
+  const linhas = COLETAS_POR_ANO.map(({ n, nome }) => {
+    const composto = valor * (Math.pow(1 + r / n, n) - 1);
+    /* O ganho EXTRA: só o juro sobre juro, que é o que a frequência compra. */
+    const extra = composto - simples;
+    const custo = n * custoPorColeta;
+    return { n, nome, apy: aprParaApy(aprPct, n), extra, custo, liquido: extra - custo };
+  });
+
+  /* Empate desfeito pela MENOR frequência: mexer menos é o padrão, e quando
+     dois caminhos dão o mesmo dinheiro o que pede menos clique dele ganha. */
+  let melhor = linhas[0];
+  for (const l of linhas) if (l.liquido > melhor.liquido) melhor = l;
+
+  return { simples, linhas, melhor, custoPorColeta };
+}
+
+/* QUANTO TEM PRA RECOLHER, CONTRA O QUE RECOLHER CUSTA.
+ *
+ * A comparação direta que ele pediu ao perguntar "cadê as taxas acumuladas".
+ * Sem verbo de ordem: os dois números e a razão entre eles. */
+export function recolherVale(taxasAcumuladas, custoPorColeta) {
+  if (!(taxasAcumuladas >= 0) || !(custoPorColeta >= 0)) return null;
+  if (!(custoPorColeta > 0)) return null;
+  const quantasVezes = taxasAcumuladas / custoPorColeta;
+  return {
+    taxasAcumuladas, custoPorColeta, quantasVezes,
+    /* Cem vezes o custo é um piso MEU, e está marcado como meu: abaixo disso o
+       que há pra recolher e o que recolher custa estão na mesma ordem de
+       grandeza, e aí a frase do relatório deixa de ser teórica. Não é ordem
+       pra recolher nem pra esperar — é o aviso de quando a conta aperta. */
+    apertado: quantasVezes < PISO_DE_COLETA_MEU,
+  };
+}
+
+export const PISO_DE_COLETA_MEU = 100;
+
 /* QUANTO O PAR ANDOU EM 7 DIAS — e a faixa aguenta isso?
  *
  * ---------------------------------------------------------------------------

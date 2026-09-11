@@ -184,6 +184,11 @@ export function paginaDoPainel() {
      que sairiam achatadas. Entao a proporcao mora no viewBox (720x150) e a
      altura segue a largura. */
   .btcGraf { width: 100%; height: auto; display: block; margin: 4px 0 2px; }
+  /* "cerca de" e a palavra que faz o trabalho: a cauda da taxa de rede e
+     gorda (medido em 11/09/2026, a maior das 19 transacoes da Orca pagou cem
+     vezes a mediana), entao isto e ordem de grandeza e nunca preco. Por isso
+     tambem vai em cinza: e contexto do numero ao lado, nao numero proprio. */
+  .coleta { color: var(--fraco); font-weight: 400; }
   .vol { margin-top: 6px; }
   .volBarra { position: relative; height: 4px; border-radius: 3px;
     background: var(--linha); overflow: hidden; }
@@ -6488,8 +6493,43 @@ function ganhoDaPosicao(l) {
      * com oito casas nao entram na cabeca de ninguem de bater o olho, e a
      * pergunta que se faz olhando uma posicao e "quanto isso vale". */
     if (t.emDolar != null) {
+      /* E QUANTO CUSTA IR BUSCAR, na mesma linha.
+       *
+       * Relatorio "APR vs APY" (Defiverso, julho/2026, p.5): "cada
+       * reinvestimento paga taxa de rede. Em posicoes pequenas, reinvestir
+       * todo dia pode custar mais do que o ganho extra".
+       *
+       * A comparacao mora AQUI e nao num bloco proprio porque um numero sem o
+       * outro nao decide nada: saber que rendeu US$ 2,50 so responde "vale a
+       * viagem?" quando a viagem tem preco do lado.
+       *
+       * SO APARECE QUANDO DA PRA CUSTAR EM DOLAR. Sem o preco do SOL, o custo
+       * sairia em lamports, e lamport nao se compara com dolar de cabeca. */
+      var c = pos.coleta;
+      var viagem = "";
+      /* O AVISO DO RELATORIO SO APARECE QUANDO ELE MORDE.
+       *
+       * "Em posicoes pequenas, reinvestir todo dia pode custar mais do que o
+       * ganho extra" (APR vs APY, p.5). Com o custo da rede de hoje isso quase
+       * nunca acontece — e uma linha que diz "esta tudo bem" toda vez nao
+       * informa nada, so ocupa tela. Entao ela fica calada ate a conta virar. */
+      var aperto = (c && c.vale && c.vale.apertado)
+        ? ' <span class="coleta">— o que ha pra recolher paga a viagem so ' +
+          Math.round(c.vale.quantasVezes) + " vezes</span>"
+        : "";
+      if (c && c.dolar > 0) {
+        /* SEIS CASAS DECIMAIS DEBAIXO DE "CERCA DE" E CONTRADICAO.
+           dinheiroMiudo mostra "US$ 0,000498" abaixo de um centavo, que e
+           exato e ilegivel — e exatidao e justamente o que esta linha NAO
+           pode prometer. Abaixo de um centavo, a frase diz mais que o
+           numero. */
+        viagem = ' <span class="coleta">· recolher custa ' +
+          (c.dolar < 0.01
+            ? "menos de um centavo"
+            : "cerca de " + dinheiroMiudo(c.dolar, "USD")) + "</span>";
+      }
       linhas += '<div class="lvAviso sobe">taxas acumuladas: ' +
-        dinheiroMiudo(t.emDolar, "USD") + "</div>";
+        dinheiroMiudo(t.emDolar, "USD") + viagem + aperto + "</div>";
     }
   }
 
