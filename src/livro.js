@@ -124,9 +124,63 @@ export function montarLivro({ linhas, movimentos, daCadeia } = {}) {
   const posicoes = new Set(
     (linhas || []).filter((l) => l?.posicao && l?.chave).map((l) => l.chave));
 
-  /* Quais posições a cadeia explica. Nelas, o que ele lançou sai de cena. */
-  const comCadeia = new Set(
-    (daCadeia || []).filter((m) => m?.chave).map((m) => m.chave));
+  /* Quais posições a cadeia explica — e ela só explica o que leu INTEIRO.
+   *
+   * A regra antiga era "a cadeia manda: onde ela falou, o lançamento dele
+   * cala". Ela está certa quando a leitura é completa, e faz estrago quando
+   * não é: uma leitura pela metade apaga lançamentos bons e a conta passa a
+   * medir só o pedaço que sobrou.
+   *
+   * O caso que pegou, com os números dele (12/09/2026). Uma pool SOL/USDC
+   * fechada, onde ele lançou TRÊS aportes (9,92 + 9,38 + 9,51 = 28,81) e um
+   * saque de 28,86 — ganho de cinco centavos. A leitura da cadeia trouxe só
+   * DUAS transações: um depósito de 9,94 e o fechamento de 28,96. Os três
+   * lançamentos dele calaram, e a pool passou a aparecer rendendo
+   * +US$ 19,02 — quase o dobro do que ela chegou a ter dentro.
+   *
+   * O número apareceu em três janelas ao mesmo tempo e ele viu na tela.
+   *
+   * É a receita 2.5 numa terceira roupa: ausência só vale como prova quando a
+   * leitura ficou completa. A cadeia é autoridade sobre o que ela VIU — nunca
+   * sobre o que ela não viu.
+   *
+   * O teste é o dinheiro que ENTROU, e não a contagem de eventos: se o que ele
+   * lançou de aporte é sensivelmente maior do que o que a cadeia achou, faltou
+   * transação, e aí quem manda é o lançamento. A folga de 10% existe porque os
+   * dois nunca batem exatamente — a cadeia avalia no preço do instante e o
+   * lançamento no que ele digitou. */
+  const somaDeAportes = (lista) => {
+    const por = new Map();
+    for (const m of lista || []) {
+      if (!m?.chave) continue;
+      /* COLHEITA NÃO É ENTRADA, e ela chega aqui com valor positivo porque só
+         saque leva sinal negativo. Sem esta linha, uma posição cujas TAXAS a
+         cadeia leu passaria por "leitura completa" sem ela ter visto depósito
+         nenhum — e aí o buraco voltava inteiro, por uma porta mais estreita.
+         Quem pegou foi o próprio teste, na primeira rodada. */
+      if (m.tipo === "colheita") continue;
+      const v = valorDo(m);
+      if (!(v > 0)) continue;
+      por.set(m.chave, (por.get(m.chave) || 0) + v);
+    }
+    return por;
+  };
+  const aportouNaCadeia = somaDeAportes(daCadeia);
+  const aportouNoLancamento = somaDeAportes(movimentos);
+
+  const comCadeia = new Set();
+  for (const m of daCadeia || []) {
+    if (!m?.chave) continue;
+    const dele = aportouNoLancamento.get(m.chave) || 0;
+    const naCadeia = aportouNaCadeia.get(m.chave) || 0;
+    if (dele > 0 && naCadeia < dele * 0.9) continue;   // leitura incompleta
+    comCadeia.add(m.chave);
+  }
+
+  /* E o que a cadeia leu pela metade não entra junto com o lançamento dele:
+     somar os dois contaria o mesmo dinheiro duas vezes. Onde a leitura ficou
+     curta, ela inteira sai de cena. */
+  const cadeiaQueVale = (daCadeia || []).filter((m) => comCadeia.has(m?.chave));
 
   const eventos = [];
   const guardar = (m, deOnde) => {
@@ -151,7 +205,7 @@ export function montarLivro({ linhas, movimentos, daCadeia } = {}) {
     if (comCadeia.has(m?.chave)) continue;
     guardar(m, "lancamento");
   }
-  for (const m of daCadeia || []) guardar({ ...m, daCadeia: true }, "cadeia");
+  for (const m of cadeiaQueVale) guardar({ ...m, daCadeia: true }, "cadeia");
 
   eventos.sort((a, b) => (a.quando < b.quando ? -1 : a.quando > b.quando ? 1 : 0));
 

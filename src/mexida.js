@@ -219,7 +219,7 @@ export async function mexidasDaPosicao(posicao, dono, pedir, { quantas = 12 } = 
     .catch(() => null);
   if (!Array.isArray(sigs)) return null;
 
-  const fora = [], faltaram = [];
+  const fora = [], faltaram = [], naoEntendi = [];
   for (const s of sigs) {
     if (s?.err) continue; // transação que falhou não moveu dinheiro
     const t = await pedir("getTransaction", [s.signature, {
@@ -240,9 +240,70 @@ export async function mexidasDaPosicao(posicao, dono, pedir, { quantas = 12 } = 
         .map((l) => String(l).split("Instruction: ")[1]),
     }, dono);
     if (m) fora.push(m);
+    else {
+      /* GUARDA O PORQUE, nao so o fato. "Nao entendi duas" nao diz nada; "nao
+         entendi duas, e as instrucoes delas sao IncreaseLiquidityV2" diz onde
+         esta o buraco e como fecha-lo. */
+      naoEntendi.push({
+        assinatura: s.signature,
+        instrucoes: (t.meta?.logMessages || [])
+          .filter((l) => /Instruction: /.test(l))
+          .map((l) => String(l).split("Instruction: ")[1]),
+        tokensNaTx: (t.meta?.postTokenBalances || []).length,
+        donoParticipa: (t.transaction?.message?.accountKeys || [])
+          .some((k) => (k?.pubkey || k) === dono),
+      });
+    }
   }
   /* Do mais velho pro mais novo: é a ordem em que as coisas aconteceram, e a
      ordem em que um extrato se lê. */
   fora.sort((a, b) => (a.quando || 0) - (b.quando || 0));
-  return { mexidas: fora, faltaram, olhou: sigs.length };
+
+  /* A LEITURA SABE SE FICOU COMPLETA, e essa é a informação mais importante
+   * que sai daqui.
+   *
+   * Três coisas diferentes acontecem com uma transação:
+   *
+   *   virou mexida   o caminho feliz;
+   *   FALTOU         o nó não devolveu (histórico podado, rede caiu). Não sei
+   *                  o que tinha nela;
+   *   não entendi    li e não reconheci — ou ela não mexe no dinheiro dele
+   *                  (a criação do NFT de posição, por exemplo), ou mexe de um
+   *                  jeito que eu ainda não sei ler.
+   *
+   * As duas últimas são ausência, e ausência vira mentira quando passa por
+   * prova. Foi o que aconteceu em 12/09/2026: uma pool com QUATRO transações
+   * devolveu duas mexidas, e quem lê achou que eram todas. A conta comparou
+   * "entrou 9,94" (um dos três depósitos) com "saiu 28,96" (o valor certo) e
+   * anunciou +US$ 19,02 de lucro numa pool que teve 28,81 dentro por um dia.
+   *
+   * Quem decide o que fazer com isso é quem chama. O trabalho daqui é NÃO
+   * ESCONDER. */
+  /* NEM TODA "NAO ENTENDI" E BURACO — e eu errei isso na primeira tentativa.
+   *
+   * Escrevi `completa = faltaram.length === 0` achando que transacao lida e
+   * nao reconhecida fosse sempre inofensiva (a criacao do NFT da posicao, por
+   * exemplo, que nao move dinheiro nenhum). Medido contra a pool dele no mesmo
+   * dia: das duas nao entendidas, uma era
+   *
+   *     SwapRouteV3, SwapV2, SwapV2     com 11 tokens se mexendo
+   *
+   * Um SWAP. Quando ele aumenta uma pool pondo so um dos lados, a Orca troca e
+   * deposita na mesma transacao — e o leitor, que so conhece
+   * IncreaseLiquidity/CollectFees/ClosePosition, devolve nada.
+   *
+   * A pergunta que separa as duas e simples: o dono participa E ha saldo de
+   * token mudando? Entao aquela transacao mexeu no dinheiro dele e eu nao sei
+   * dizer como. Isso e buraco, e buraco tem que se declarar.
+   *
+   * Enquanto o leitor nao aprender a ler swap, esta e a resposta honesta: a
+   * leitura se diz incompleta, a cadeia nao cala o que ele lancou, e a conta
+   * usa o numero dele. Preferir o pior dado ao dado inventado. */
+  const cegueira = naoEntendi.filter((x) => x.donoParticipa && x.tokensNaTx > 0);
+
+  return {
+    mexidas: fora, faltaram, naoEntendi,
+    olhou: sigs.length,
+    completa: faltaram.length === 0 && cegueira.length === 0,
+  };
 }

@@ -286,6 +286,108 @@ titulo("NINGUÉM MAIS DECIDE ISSO SOZINHO");
     todos.length ? "decidem sozinhos: " + todos.join(", ") : "");
 }
 
+// ---------------------------------------------------------------------------
+/* A CADEIA SÓ MANDA NO QUE ELA LEU INTEIRO.
+ *
+ * O caso real, com os números dele em 12/09/2026. Uma pool SOL/USDC aberta e
+ * fechada em dois dias:
+ *
+ *   o que ele lançou   3 aportes: 9,92 + 9,38 + 9,51 = 28,81
+ *                      1 saque:   28,86
+ *                      → ganho de CINCO CENTAVOS
+ *
+ *   o que a cadeia leu 1 depósito:  9,94
+ *                      1 fechamento: 28,96
+ *                      → ganho de 19,02
+ *
+ * A leitura trouxe só uma das três entradas. A regra antiga — "a cadeia manda
+ * inteira: onde ela falou, o lançamento dele cala" — apagou os três
+ * lançamentos bons e ficou com o pedaço. A pool passou a aparecer rendendo
+ * quase o dobro do que chegou a ter dentro, em três janelas ao mesmo tempo.
+ *
+ * A regra está certa quando a leitura é completa. A correção não é desistir da
+ * cadeia: é medir se ela leu tudo. E o teste é o DINHEIRO QUE ENTROU, não a
+ * contagem de eventos — contar eventos daria "duas contra quatro" e falharia
+ * no dia em que ele lançasse um aporte só onde a cadeia viu dois.
+ * ------------------------------------------------------------------------- */
+titulo("A cadeia só manda no que ela leu inteiro");
+
+{
+  const linhas = [{ chave: "p", posicao: "ALGUMA" }];
+  const movimentos = [
+    { chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 9.92 },
+    { chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 9.38 },
+    { chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 9.507822 },
+    { chave: "p", quando: "2026-09-09", tipo: "saque", valor_usd: 28.860468 },
+  ];
+  /* A cadeia viu um depósito só. */
+  const daCadeia = [
+    { chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 9.938870, qtd_a: 0.048, simbolo_a: "SOL" },
+    { chave: "p", quando: "2026-09-09", tipo: "saque", valor_usd: 28.963354, qtd_a: 0.2, simbolo_a: "SOL" },
+  ];
+
+  const livro = montarLivro({ linhas, movimentos, daCadeia });
+  const eventos = livro.porChave.get("p") || [];
+  const entrou = eventos.filter((e) => e.usd > 0).reduce((s, e) => s + e.usd, 0);
+
+  conferir("leitura incompleta não cala os lançamentos dele",
+    Math.abs(entrou - 28.807822) < 0.01,
+    "entrou " + entrou.toFixed(2) + " — devia ser 28,81, o que ele lançou");
+  conferir("e a cadeia pela metade não entra junto (seria contar duas vezes)",
+    eventos.every((e) => e.deOnde === "lancamento"),
+    eventos.map((e) => e.deOnde).join(", "));
+  conferir("a posição não fica marcada como explicada pela cadeia",
+    !livro.comCadeia.has("p"));
+}
+
+{
+  /* E A CADEIA COMPLETA CONTINUA MANDANDO — que é a regra original, e ela
+     existe por um motivo bom: a cadeia sabe o valor do instante, que nenhum
+     lançamento à mão acerta. */
+  const linhas = [{ chave: "p", posicao: "ALGUMA" }];
+  const movimentos = [
+    { chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 100 },
+  ];
+  const daCadeia = [
+    { chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 99.7, qtd_a: 1, simbolo_a: "SOL" },
+    { chave: "p", quando: "2026-09-09", tipo: "saque", valor_usd: 101.2, qtd_a: 1, simbolo_a: "SOL" },
+  ];
+  const livro = montarLivro({ linhas, movimentos, daCadeia });
+  const eventos = livro.porChave.get("p") || [];
+  conferir("cadeia completa continua calando o lançamento dele",
+    eventos.every((e) => e.deOnde === "cadeia"),
+    eventos.map((e) => e.deOnde).join(", "));
+  conferir("e a folga de 10% cobre a diferença de preço do instante",
+    livro.comCadeia.has("p"), "99,70 contra 100,00 é a mesma entrada");
+}
+
+{
+  /* Posição SEM lançamento nenhum: a cadeia manda, porque não há com o que
+     comparar e ela é a única que sabe. Exigir lançamento aqui apagaria as
+     pools que ele montou direto na carteira, sem passar pelo painel. */
+  const linhas = [{ chave: "p", posicao: "ALGUMA" }];
+  const daCadeia = [
+    { chave: "p", quando: "2026-09-11", tipo: "aporte", valor_usd: 99.5, qtd_a: 1, simbolo_a: "SOL" },
+  ];
+  const livro = montarLivro({ linhas, movimentos: [], daCadeia });
+  conferir("sem lançamento pra comparar, a cadeia manda",
+    livro.comCadeia.has("p"));
+}
+
+{
+  /* A colheita não conta como entrada. Se contasse, uma pool cujas taxas a
+     cadeia leu passaria por "leitura completa" sem ter visto depósito nenhum. */
+  const linhas = [{ chave: "p", posicao: "ALGUMA" }];
+  const movimentos = [{ chave: "p", quando: "2026-09-08", tipo: "aporte", valor_usd: 100 }];
+  const daCadeia = [
+    { chave: "p", quando: "2026-09-09", tipo: "colheita", valor_usd: 100, qtd_a: 1, simbolo_a: "SOL" },
+  ];
+  const livro = montarLivro({ linhas, movimentos, daCadeia });
+  conferir("colheita lida não faz a leitura passar por completa",
+    !livro.comCadeia.has("p"),
+    "colher não é aportar — a entrada continua não vista");
+}
+
 console.log("\n" + "-".repeat(60));
 console.log(falhou === 0 ? `TUDO VERDE — ${passou} conferências` : `${falhou} FALHARAM (de ${passou + falhou})`);
 process.exit(falhou === 0 ? 0 : 1);

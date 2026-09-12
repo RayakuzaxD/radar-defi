@@ -2863,9 +2863,35 @@ export default {
           (m, q) => pedir(m, q, nos), { quantas: 12 }).catch(() => null);
         if (!r) { porPosicao[p] = { erro: "nao li" }; continue; }
         porPosicao[p] = r;
-        todas = todas.concat(r.mexidas.map((m) => ({ ...m, posicao: p })));
+        /* CADA MEXIDA CARREGA SE A LEITURA DA POSICAO DELA FICOU COMPLETA.
+           Vai junto do evento porque e junto do evento que a conta decide se
+           confia na cadeia ou no lancamento dele. */
+        todas = todas.concat(r.mexidas.map((m) => ({
+          ...m, posicao: p, leituraCompleta: r.completa,
+        })));
       }
-      const lido = { mexidas: todas, faltaram: [] };
+
+      /* O QUE NAO FOI LIDO SAI DAQUI COM NOME, e essa linha estava mentindo.
+       *
+       * Ela era `faltaram: []`, fixo. A leitura JA SABIA quais transacoes o no
+       * nao devolveu — `mexidasDaPosicao` conta uma a uma — e a rota jogava
+       * fora, respondendo como se tivesse lido tudo.
+       *
+       * Em 12/09/2026 isso custou o numero mais errado da noite: uma pool com
+       * quatro transacoes devolveu duas mexidas, e o painel, sem saber que
+       * faltava metade, deixou a cadeia calar os lancamentos dele. A pool
+       * apareceu rendendo +US$ 19,02 em tres janelas ao mesmo tempo.
+       *
+       * Nao e o no que falhou que faz o estrago: e a resposta nao dizer que
+       * ele falhou. */
+      const incompletas = Object.entries(porPosicao)
+        .filter(([, r]) => r?.erro || r?.completa === false)
+        .map(([p]) => p);
+      const lido = {
+        mexidas: todas,
+        faltaram: Object.values(porPosicao).flatMap((r) => r?.faltaram || []),
+        incompletas,
+      };
       if (!todas.length && Object.values(porPosicao).every((x) => x.erro)) {
         return Response.json({ erro: "nao consegui ler a cadeia agora" });
       }
@@ -2912,6 +2938,27 @@ export default {
         })),
         lancamentos: lancamentosDasMexidas(lido.mexidas, precoEm),
         faltaram: lido.faltaram.length,
+        /* AS POSICOES CUJA LEITURA FICOU PELA METADE, pelo endereco. Sem esta
+           lista o painel nao tem como saber em quem confiar, e confiar numa
+           leitura pela metade foi o que criou os US$ 19,02 do nada. */
+        incompletas: lido.incompletas,
+        /* E o extrato por posicao, pra quando alguem precisar entender por
+           que uma delas entrou na lista de cima. */
+        porPosicao: Object.fromEntries(
+          Object.entries(porPosicao).map(([p, r]) => [p, r?.erro
+            ? { erro: r.erro }
+            : { olhou: r.olhou, leu: r.mexidas.length,
+                faltaram: (r.faltaram || []).length,
+                naoEntendi: (r.naoEntendi || []).length,
+                /* O PORQUE de cada uma que nao virou mexida: as instrucoes da
+                   transacao. E o que diz se ela nao mexe no dinheiro dele (a
+                   criacao do NFT da posicao) ou se ela mexe de um jeito que o
+                   leitor ainda nao sabe ler — e so o segundo caso e buraco. */
+                porque: (r.naoEntendi || []).map((x) => ({
+                  instrucoes: x.instrucoes, tokensNaTx: x.tokensNaTx,
+                  donoParticipa: x.donoParticipa,
+                })),
+                completa: r.completa }])),
       }, { headers: { "cache-control": "no-store" } });
     }
 

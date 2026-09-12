@@ -509,6 +509,23 @@ export function paginaDoPainel() {
   .fatoLinha span { color: var(--fraco); }
   .fatoLinha b { text-align: right; }
   .fatoNota { color: var(--fraco); font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
+
+  /* O aviso de versao nova pra aba que ficou aberta. Fica embaixo, fora do
+     caminho do dedo, e some sozinho quando ele atualiza. */
+  .avisoVersao {
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 60;
+    display: flex; gap: 10px; align-items: center; justify-content: center;
+    flex-wrap: wrap;
+    padding: 10px 14px; border-radius: 12px;
+    background: var(--caixa, #12161c); border: 1px solid var(--linha, #263042);
+    box-shadow: 0 8px 28px rgba(0,0,0,.45);
+    font-size: 13px; color: var(--fraco);
+  }
+  .avisoVersao button {
+    padding: 6px 14px; border-radius: 999px; border: 0; cursor: pointer;
+    background: var(--verde, #5ef2a8); color: #05140c; font-weight: 700;
+    font-size: 13px;
+  }
   /* O bloco do dinheiro DELE, destacado do bloco do mercado: são duas coisas
      diferentes na mesma caixa, e o olho precisa saber onde uma acaba. */
   .vvLinha b { font-size: 15px; }
@@ -3031,9 +3048,63 @@ function montarLivro({ linhas, movimentos, daCadeia } = {}) {
   const posicoes = new Set(
     (linhas || []).filter((l) => l?.posicao && l?.chave).map((l) => l.chave));
 
-  /* Quais posições a cadeia explica. Nelas, o que ele lançou sai de cena. */
-  const comCadeia = new Set(
-    (daCadeia || []).filter((m) => m?.chave).map((m) => m.chave));
+  /* Quais posições a cadeia explica — e ela só explica o que leu INTEIRO.
+   *
+   * A regra antiga era "a cadeia manda: onde ela falou, o lançamento dele
+   * cala". Ela está certa quando a leitura é completa, e faz estrago quando
+   * não é: uma leitura pela metade apaga lançamentos bons e a conta passa a
+   * medir só o pedaço que sobrou.
+   *
+   * O caso que pegou, com os números dele (12/09/2026). Uma pool SOL/USDC
+   * fechada, onde ele lançou TRÊS aportes (9,92 + 9,38 + 9,51 = 28,81) e um
+   * saque de 28,86 — ganho de cinco centavos. A leitura da cadeia trouxe só
+   * DUAS transações: um depósito de 9,94 e o fechamento de 28,96. Os três
+   * lançamentos dele calaram, e a pool passou a aparecer rendendo
+   * +US$ 19,02 — quase o dobro do que ela chegou a ter dentro.
+   *
+   * O número apareceu em três janelas ao mesmo tempo e ele viu na tela.
+   *
+   * É a receita 2.5 numa terceira roupa: ausência só vale como prova quando a
+   * leitura ficou completa. A cadeia é autoridade sobre o que ela VIU — nunca
+   * sobre o que ela não viu.
+   *
+   * O teste é o dinheiro que ENTROU, e não a contagem de eventos: se o que ele
+   * lançou de aporte é sensivelmente maior do que o que a cadeia achou, faltou
+   * transação, e aí quem manda é o lançamento. A folga de 10% existe porque os
+   * dois nunca batem exatamente — a cadeia avalia no preço do instante e o
+   * lançamento no que ele digitou. */
+  const somaDeAportes = (lista) => {
+    const por = new Map();
+    for (const m of lista || []) {
+      if (!m?.chave) continue;
+      /* COLHEITA NÃO É ENTRADA, e ela chega aqui com valor positivo porque só
+         saque leva sinal negativo. Sem esta linha, uma posição cujas TAXAS a
+         cadeia leu passaria por "leitura completa" sem ela ter visto depósito
+         nenhum — e aí o buraco voltava inteiro, por uma porta mais estreita.
+         Quem pegou foi o próprio teste, na primeira rodada. */
+      if (m.tipo === "colheita") continue;
+      const v = valorDo(m);
+      if (!(v > 0)) continue;
+      por.set(m.chave, (por.get(m.chave) || 0) + v);
+    }
+    return por;
+  };
+  const aportouNaCadeia = somaDeAportes(daCadeia);
+  const aportouNoLancamento = somaDeAportes(movimentos);
+
+  const comCadeia = new Set();
+  for (const m of daCadeia || []) {
+    if (!m?.chave) continue;
+    const dele = aportouNoLancamento.get(m.chave) || 0;
+    const naCadeia = aportouNaCadeia.get(m.chave) || 0;
+    if (dele > 0 && naCadeia < dele * 0.9) continue;   // leitura incompleta
+    comCadeia.add(m.chave);
+  }
+
+  /* E o que a cadeia leu pela metade não entra junto com o lançamento dele:
+     somar os dois contaria o mesmo dinheiro duas vezes. Onde a leitura ficou
+     curta, ela inteira sai de cena. */
+  const cadeiaQueVale = (daCadeia || []).filter((m) => comCadeia.has(m?.chave));
 
   const eventos = [];
   const guardar = (m, deOnde) => {
@@ -3058,7 +3129,7 @@ function montarLivro({ linhas, movimentos, daCadeia } = {}) {
     if (comCadeia.has(m?.chave)) continue;
     guardar(m, "lancamento");
   }
-  for (const m of daCadeia || []) guardar({ ...m, daCadeia: true }, "cadeia");
+  for (const m of cadeiaQueVale) guardar({ ...m, daCadeia: true }, "cadeia");
 
   eventos.sort((a, b) => (a.quando < b.quando ? -1 : a.quando > b.quando ? 1 : 0));
 
@@ -8375,10 +8446,19 @@ function pedirSombrasDaCadeia() {
      *
      * O livro precisa do evento INTEIRO — valor, quantidade e simbolo dos dois
      * lados. As sombras ele gera sozinho, que e o trabalho dele. */
+    /* A LEITURA PELA METADE NAO ENTRA. A rota agora diz, pelo endereco, quais
+       posicoes ela nao conseguiu ler inteiras — transacao que o no nao
+       devolveu. Deixar essas mexidas entrarem faria a cadeia calar os
+       lancamentos dele com base em metade da historia, que foi exatamente o
+       que criou os "+US$ 19,02" que ele viu na tela. */
+    var pelaMetade = {};
+    ((j && j.incompletas) || []).forEach(function (p) { pelaMetade[p] = 1; });
+
     var fora = [];
     ((j && j.mexidas) || []).forEach(function (m) {
       var chave = porPosicao[m.posicao];
       if (!chave || m.valorUsd == null) return;
+      if (pelaMetade[m.posicao] || m.leituraCompleta === false) return;
       var dia = new Date(m.quando * 1000).toISOString().slice(0, 10);
       var mints = Object.keys(m.tokens || {});
       var ev = {
@@ -10391,6 +10471,66 @@ function decidirAbertura(aqui, resposta, jaTentei) {
     return entrar(veredito.passo === "em-dia" ? "pronto" : "parado");
   })();
 })();
+
+/* ---------------------------------------------------------------------------
+ * A ABA QUE FICOU ABERTA TAMBEM PRECISA SABER QUE SAIU VERSAO NOVA.
+ *
+ * A barrinha de abertura confere a versao UMA VEZ, quando a pagina carrega.
+ * Resolve quem fecha e abre — e nao resolve nada pra aba que fica aberta,
+ * que e como ele usa no computador.
+ *
+ * Em 12/09/2026 isso quase custou caro: o celular dele ja estava na v129 com
+ * a conta da pool consertada, e o computador seguia mostrando o numero VELHO,
+ * com a mesma pool contando +US$ 19,02 de lucro que ela nao teve. As duas
+ * telas discordando, e nenhuma das duas dizendo por que. Ele podia ter
+ * concluido que o conserto nao funcionou — e o print que ele mandou tinha
+ * exatamente essa cara.
+ *
+ * A conferencia agora se repete quando a aba volta a ficar visivel. E ela
+ * AVISA, nao recarrega sozinha: recarregar por conta propria no meio de um
+ * lancamento apagaria o que ele estava digitando. Quem decide a hora e ele.
+ * ------------------------------------------------------------------------- */
+var ultimaOlhadaNaVersao = 0;
+var avisoDeVersao = null;
+
+function mostrarAvisoDeVersao(nova) {
+  if (avisoDeVersao) return;                   // um aviso basta
+  avisoDeVersao = document.createElement("div");
+  avisoDeVersao.className = "avisoVersao";
+  avisoDeVersao.innerHTML =
+    '<span>saiu uma versão nova (' + esc(nova) + ') — esta aba está com a antiga</span>' +
+    '<button type="button">atualizar</button>';
+  avisoDeVersao.querySelector("button").onclick = async function () {
+    try {
+      var nomes = await caches.keys();
+      await Promise.all(nomes.map(function (n) { return caches.delete(n); }));
+      if (navigator.serviceWorker) {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(function (r) { return r.unregister(); }));
+      }
+    } catch (e) { /* sem cofre pra limpar, recarregar ja resolve */ }
+    location.reload();
+  };
+  document.body.appendChild(avisoDeVersao);
+}
+
+async function olharSeSaiuVersaoNova() {
+  if (document.visibilityState !== "visible") return;
+  /* Um minuto de descanso: trocar de aba dez vezes não vira dez pedidos. */
+  var agora = Date.now();
+  if (agora - ultimaOlhadaNaVersao < 60000) return;
+  ultimaOlhadaNaVersao = agora;
+  try {
+    var r = await fetch("/versao", { cache: "no-store" });
+    if (!r.ok) return;
+    var d = await r.json();
+    var laFora = Number(d && d.numero) || 0;
+    var aqui = Number(("${VERSAO}".match(/^v(\\d+)/) || [])[1]) || 0;
+    if (laFora > aqui) mostrarAvisoDeVersao(d.versao);
+  } catch (e) { /* sem rede, a aba segue como está — e isso é o certo */ }
+}
+
+addEventListener("visibilitychange", olharSeSaiuVersaoNova);
 
 let convite = null;
 addEventListener("beforeinstallprompt", (e) => {
