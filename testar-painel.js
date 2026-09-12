@@ -755,7 +755,7 @@ titulo("Nenhuma função do painel tem nome repetido");
  * Taxa não recolhida sai junto se ele fechar a pool. Deixar de fora
  * subestimava o rendimento dele em quase um terço.
  * ------------------------------------------------------------------------- */
-titulo("Taxa não recolhida entra nas DUAS contas");
+titulo("Taxa não recolhida entra no valor, uma vez só");
 {
   const todoOScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
     .map((m) => m[1]).join(SEPARADOR);
@@ -772,21 +772,45 @@ titulo("Taxa não recolhida entra nas DUAS contas");
   };
 
   conferir("a regra do pendente mora numa função só",
-    !!corpoDe("pendenteDaLinha"),
+    !!corpoDe("taxaPendenteDaPosicao"),
     "duas regras diferentes pro mesmo campo é como nasce erro silencioso");
 
-  /* QUEM CALCULA RESULTADO DE POSIÇÃO PERGUNTA O PENDENTE. As duas contas que
-     transformam uma posição em dinheiro na tela: a linha (resultadoDoDinheiro)
-     e a soma da caixinha (lucroDaLinha). */
-  for (const nome of ["lucroDaLinha", "resultadoDoDinheiro"]) {
+  /* A SOMA ACONTECE NA FONTE, uma vez só.
+   *
+   * A primeira correção fez cada conta somar o pendente por conta própria.
+   * Funcionou e estava errada de desenho: três telas somando é três chances
+   * de uma esquecer, e quem esquece não dá erro — só mostra menos. Foi
+   * exatamente assim que o defeito nasceu.
+   *
+   * Agora o valor da posição já sai cheio de onde ele nasce. */
+  conferir("o valor da posição sai da fonte já com as taxas dentro",
+    /emUSD:\s*cheio/.test(todoOScript) && /taxaPendenteDaPosicao\s*\(\s*pos\s*\)/.test(todoOScript),
+    "se a fonte não somar, cada tela tem que lembrar — e uma vai esquecer");
+
+  /* E NINGUÉM MAIS SOMA. Depois da fonte, somar de novo conta o mesmo
+     dinheiro duas vezes — o defeito inverso, e tão silencioso quanto. */
+  const naoPodemSomar = [
+    ["lucroDaLinha", /emUSD\s*\+\s*pendente/],
+    ["resultadoDaLinha", /valeHoje\s*\+\s*pend\b/],
+    ["resultadoDoDinheiro", /valeHoje\s*\+\s*\(\s*r\.pendente/],
+  ];
+  for (const [nome, somaProibida] of naoPodemSomar) {
     const corpo = corpoDe(nome);
     conferir(nome + " existe", !!corpo);
     if (corpo) {
-      conferir(nome + " soma a taxa não recolhida",
-        /pendenteDaLinha\s*\(/.test(corpo),
-        "sem isso esta conta discorda da outra sobre a mesma pool");
+      conferir(nome + " NÃO soma as taxas de novo",
+        !somaProibida.test(corpo),
+        "o valor já vem cheio — somar aqui conta o mesmo dinheiro duas vezes");
     }
   }
+
+  /* O PENDENTE CONTINUA CHEGANDO nas telas, e não é contradição: ele serve
+     pra MOSTRAR as taxas separadas e pra dizer se foram lidas. Null quer
+     dizer "não consegui ler os ticks", e aí a tela avisa que a conta está
+     incompleta em vez de fingir que está inteira. */
+  conferir("e a tela ainda sabe quando as taxas não foram lidas",
+    /taxas ainda não entram nesta conta/.test(todoOScript),
+    "sem esse aviso, conta incompleta passa por conta inteira");
 
   /* E A PROVA COM OS NÚMEROS DELE: a aritmética que ele fez de cabeça olhando
      a tela. Se um dia a soma voltar a ignorar as taxas, esta conta volta a

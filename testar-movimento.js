@@ -47,7 +47,7 @@ if (!tipos) throw new Error("não achei TIPOS_DE_MOVIMENTO em src/painel.js");
 const montar = new Function(`
   var TIPOS_DE_MOVIMENTO = ${tipos};
   ${["movEmDolar", "primeiroAporte", "resumoDosMovimentos", "resumoDaLinhaInteira",
-     "resultadoDaLinha", "conferirMovimento", "pendenteDaLinha"].map((n) => pegarFuncao(fonte, n)).join("\n")}
+     "resultadoDaLinha", "conferirMovimento", "pendenteDaLinha", "taxaPendenteDaPosicao"].map((n) => pegarFuncao(fonte, n)).join("\n")}
   return { movEmDolar: movEmDolar, resumoDosMovimentos: resumoDosMovimentos,
            resumoDaLinhaInteira: resumoDaLinhaInteira,
            resultadoDaLinha: resultadoDaLinha, conferirMovimento: conferirMovimento,
@@ -117,7 +117,7 @@ titulo("A COLHEITA: realizar o lucro não pode apagar o lucro");
    * tela passa a dizer: vale 10, rendeu 0. O lucro sumiu no instante em que
    * ele o realizou. */
   const antesDeColher = resumoDosMovimentos([mov("aporte", 10)]);
-  const a = resultadoDaLinha(antesDeColher, 10, 0.5);
+  const a = resultadoDaLinha(antesDeColher, 10.5, 0.5);   // valor cheio
   conferir("antes de colher, o ganho é a taxa pendente", perto(a.ganho, 0.5));
 
   const semRegistrar = resultadoDaLinha(antesDeColher, 10, 0);
@@ -135,7 +135,7 @@ titulo("A COLHEITA: realizar o lucro não pode apagar o lucro");
 {
   /* E o que continua rendendo depois da colheita entra por cima. */
   const r = resumoDosMovimentos([mov("aporte", 10), mov("colheita", 0.5)]);
-  const res = resultadoDaLinha(r, 10, 0.2);
+  const res = resultadoDaLinha(r, 10.2, 0.2);   // valor cheio
   conferir("colhido mais pendente novo somam", perto(res.ganho, 0.7));
   conferir("e as partes aparecem separadas",
     perto(res.realizado, 0.5) && perto(res.pendente, 0.2),
@@ -164,7 +164,7 @@ titulo("A linha NUNCA fica muda: o valor de entrada é o chão");
   conferir("e ela se declara como entrada original, não como lançamento dele",
     semNada.doValorDeEntrada === true);
 
-  const r = resultadoDaLinha(semNada, 12.423527, 0.0291);
+  const r = resultadoDaLinha(semNada, 12.423527 + 0.0291, 0.0291);   // valor cheio
   conferir("a conta sai igual à de antes", perto(r.ganho, 12.423527 + 0.0291 - 12.50, 1e-6));
   conferir("com porcentagem", r.pct != null);
 
@@ -205,8 +205,8 @@ titulo("O pendente de cada tipo de posição — e o dinheiro contado duas vezes
 
   /* A prova de que a distinção importa: o mesmo número em dois tipos. */
   const r = resumoDosMovimentos([mov("aporte", 10)]);
-  const comoPool = resultadoDaLinha(r, 10, pendenteDaLinha(pool));
-  const comoEmp = resultadoDaLinha(r, 10, pendenteDaLinha(emprestimo));
+  const comoPool = resultadoDaLinha(r, 10 + (pendenteDaLinha(pool) || 0), pendenteDaLinha(pool));
+  const comoEmp = resultadoDaLinha(r, 10 + (pendenteDaLinha(emprestimo) || 0), pendenteDaLinha(emprestimo));
   conferir("a pool ganha a taxa por fora", perto(comoPool.ganho, 0.0075));
   conferir("o empréstimo não ganha nada por fora", perto(comoEmp.ganho, 0),
     "se ganhasse, seria juro contado duas vezes");

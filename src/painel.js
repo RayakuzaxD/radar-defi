@@ -2933,7 +2933,27 @@ function valorDaLinha(f, moedaAlvo, taxa) {
   if (f.posicao) {
     var pos = posicaoDaLinha(f);
     if (pos) {
-      return { valor: converterV(pos.valor, "USD", moedaAlvo, taxa), emUSD: pos.valor, posicao: pos };
+      /* O VALOR DA POSICAO JA SAI CHEIO: liquidez MAIS as taxas que ela
+       * rendeu e ainda nao foram recolhidas.
+       *
+       * A cadeia devolve as duas coisas separadas, e o radar somava por fora —
+       * em alguns lugares. A linha de cada pool somava; a soma da caixinha
+       * nao; as janelas do resumo nao. Tres telas, dois numeros, e ele pegou
+       * somando o print: "os 5 dolares de rendimento la em cima estao
+       * corretos?". Nao estavam, e faltavam exatamente as taxas.
+       *
+       * A decisao e dele, e e a certa: "deveria contar valorizacao + taxas".
+       * Taxa acumulada e dinheiro que sai junto se ele fechar a pool — entao
+       * ela e patrimonio, nao um extra a ser lembrado caso a caso.
+       *
+       * SOMAR NA FONTE E O QUE FAZ A REGRA VALER. Enquanto cada tela somava
+       * por conta propria, bastava uma esquecer pra dois numeros discordarem
+       * sobre a mesma pool; e quem esquecia nao dava erro nenhum, so mostrava
+       * menos. Aqui em cima nao ha como esquecer: quem pergunta "quanto vale"
+       * recebe o valor inteiro, sempre. */
+      var pend = taxaPendenteDaPosicao(pos);
+      var cheio = pos.valor + (pend || 0);
+      return { valor: converterV(cheio, "USD", moedaAlvo, taxa), emUSD: cheio, posicao: pos };
     }
 
     /* NAO CONSEGUI LER — e aqui mora o defeito mais perigoso que este radar
@@ -4107,23 +4127,18 @@ function lucroDaLinha(l) {
        entrada em si ou veio de dentro (custo ja nas linhas de origem) ou e
        capital novo sem lancamento (a parte descoberta, custo aqui).
      *
-     * E O VIVO INCLUI AS TAXAS QUE AINDA NAO FORAM RECOLHIDAS.
+     * E O VIVO JA VEM COM AS TAXAS NAO RECOLHIDAS DENTRO — nao se soma aqui.
      *
-     * O valor que a cadeia devolve para uma pool e SO A LIQUIDEZ: as taxas
-     * acumuladas vem num campo a parte, e pendenteDaLinha existe exatamente
-     * pra somar isso por fora — com a regra escrita de que emprestimo nao
-     * soma (la o juro ja esta no cambio) e pool soma.
+     * A primeira correcao deste defeito somou o pendente NESTA conta, porque
+     * era aqui que ele faltava. Funcionou e estava errado de desenho: a linha
+     * da pool somava num lugar, esta conta noutro, e as janelas do resumo em
+     * lugar nenhum. Tres telas somando por conta propria e tres chances de
+     * uma esquecer — e quem esquece nao da erro, so mostra menos.
      *
-     * A linha de CADA pool ja chamava essa funcao. Esta conta, que e a soma
-     * da caixinha, nao chamava — e por isso as duas telas discordavam sobre a
-     * mesma pool. Ele pegou somando o print: as quatro pools somavam
-     * +US$ 8,12 e a caixinha dizia +US$ 5,49, que e exatamente 8,12 menos os
-     * US$ 2,64 de taxas acumuladas.
-     *
-     * Taxa nao recolhida e dinheiro dele: esta na pool, e sai junto se ele
-     * fechar. Deixar de fora subestimava o rendimento em quase um terco. */
-    var pendente = pendenteDaLinha(l) || 0;
-    return { lucro: l.emUSD + pendente - base, semHistoria: descoberta, custo: base };
+     * Agora a soma acontece na FONTE, onde o valor da posicao nasce. Quem
+     * pergunta "quanto vale" ja recebe o numero inteiro. Somar aqui de novo
+     * contaria o mesmo dinheiro duas vezes. */
+    return { lucro: l.emUSD - base, semHistoria: descoberta, custo: base };
   }
 
   if (l.f.token && l.f.quantidade != null) {
@@ -7952,16 +7967,24 @@ function resultadoDaLinha(resumo, valeHoje, pendente) {
   if (!resumo || !resumo.total) return null;
   if (valeHoje == null || !isFinite(valeHoje)) return null;
 
+  /* O PENDENTE NAO ENTRA NA SOMA — ele ja esta dentro do valeHoje.
+   *
+   * Continua chegando aqui por um motivo: dizer se as taxas FORAM LIDAS. Null
+   * quer dizer "nao consegui ler as contas de tick", e aí a conta esta
+   * incompleta e a tela avisa. Zero quer dizer "li, e nao ha taxa pendente" —
+   * ou e um emprestimo, onde o juro ja mora no cambio.
+   *
+   * Somar aqui contaria o mesmo dinheiro duas vezes desde que o valor da
+   * posicao passou a sair cheio da fonte (12/09/2026). */
   var temPendente = (pendente != null && isFinite(Number(pendente)));
-  var pend = temPendente ? Number(pendente) : 0;
 
-  var ganho = (valeHoje + pend + resumo.realizado) - resumo.custo;
+  var ganho = (valeHoje + resumo.realizado) - resumo.custo;
   var pct = resumo.custo > 0 ? (ganho / resumo.custo) * 100 : null;
 
   return {
     custo: resumo.custo,
     realizado: resumo.realizado,
-    pendente: temPendente ? pend : null,
+    pendente: temPendente ? Number(pendente) : null,
     valeHoje: valeHoje,
     ganho: ganho,
     pct: pct,
@@ -7998,12 +8021,22 @@ function conferirMovimento(m) {
  *
  * Duas regras diferentes pro mesmo campo e exatamente o tipo de coisa que
  * vira erro silencioso, entao esta escrito num lugar so. */
-function pendenteDaLinha(l) {
-  var pos = l && l.posicao;
+function taxaPendenteDaPosicao(pos) {
   if (!pos) return null;
   if (pos.tipo === "emprestimo") return 0;
   if (pos.taxas && isFinite(Number(pos.taxas.emDolar))) return Number(pos.taxas.emDolar);
   return null;
+}
+
+/* O mesmo, a partir da linha montada. Existe pra quem tem a linha montada e nao a posicao crua.
+ *
+ * ATENCAO: desde 12/09/2026 o valor da posicao JA VEM COM ESTE NUMERO DENTRO
+ * (veja o comentario em cima do emUSD). Isto aqui NAO se soma a ele — serve
+ * pra MOSTRAR as taxas separadas na tela e pra saber se elas foram lidas.
+ * Somar por fora agora seria contar o mesmo dinheiro duas vezes, que foi
+ * justamente o defeito que a mudanca resolveu. */
+function pendenteDaLinha(l) {
+  return taxaPendenteDaPosicao(l && l.posicao);
 }
 
 /* A composicao da posicao, em porcentagem de dolar.
@@ -8281,7 +8314,7 @@ function resultadoDoDinheiro(l) {
    * que existem no mundo (o que saiu do bolso e o que está lá agora) e deixa a
    * diferença por último, que é o que ela é: uma consequência dos dois. */
   var entrouAgora = '<b>' + dinheiroMiudo(r.custo, "USD") + '</b> → <b>' +
-    dinheiroMiudo(r.valeHoje + (r.pendente || 0), "USD") + '</b>';
+    dinheiroMiudo(r.valeHoje, "USD") + '</b>';
 
   if (somenteRuido) {
     txt += '<div class="lvAviso">' + entrouAgora + ' · no zero a zero' +
