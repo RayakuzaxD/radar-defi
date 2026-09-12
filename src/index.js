@@ -2842,17 +2842,33 @@ export default {
     if (url.pathname === "/api/mexidas" && pedido.method === "POST") {
       let corpo = null;
       try { corpo = await pedido.json(); } catch { corpo = null; }
-      const posicao = String(corpo?.posicao || "").trim();
       const dono = String(corpo?.dono || "").trim();
-      if (!pareceEnderecoSolana(posicao) || !pareceEnderecoSolana(dono)) {
+      /* UMA OU VARIAS. A reconstrucao do patrimonio precisa das mexidas de
+         TODAS as posicoes de uma vez: e so sabendo quando cada dinheiro saiu
+         de uma linha e entrou noutra que o passado para de inflar. Seis
+         posicoes custam ~24 subrequisicoes, que cabe. */
+      const pedidas = (Array.isArray(corpo?.posicoes) ? corpo.posicoes
+        : [corpo?.posicao]).map((x) => String(x || "").trim())
+        .filter(pareceEnderecoSolana).slice(0, 10);
+      if (!pedidas.length || !pareceEnderecoSolana(dono)) {
         return Response.json({ erro: "preciso do endereco da posicao e da carteira" },
           { status: 400 });
       }
 
       const nos = env.SOLANA_RPC ? [env.SOLANA_RPC, ...NOS] : NOS;
-      const lido = await mexidasDaPosicao(posicao, dono,
-        (m, p) => pedir(m, p, nos), { quantas: 12 }).catch(() => null);
-      if (!lido) return Response.json({ erro: "nao consegui ler a cadeia agora" });
+      const porPosicao = {};
+      let todas = [];
+      for (const p of pedidas) {
+        const r = await mexidasDaPosicao(p, dono,
+          (m, q) => pedir(m, q, nos), { quantas: 12 }).catch(() => null);
+        if (!r) { porPosicao[p] = { erro: "nao li" }; continue; }
+        porPosicao[p] = r;
+        todas = todas.concat(r.mexidas.map((m) => ({ ...m, posicao: p })));
+      }
+      const lido = { mexidas: todas, faltaram: [] };
+      if (!todas.length && Object.values(porPosicao).every((x) => x.erro)) {
+        return Response.json({ erro: "nao consegui ler a cadeia agora" });
+      }
 
       /* O PRECO DO INSTANTE de cada token que se mexeu. Uma chamada por
          instante distinto — as mexidas de uma posicao sao poucas, e os
@@ -2879,7 +2895,12 @@ export default {
 
       return Response.json({
         mexidas: lido.mexidas.map((m) => ({
-          ...m, valorUsd: (() => {
+          ...m,
+          /* O SIMBOLO VIAJA JUNTO: quem monta a sombra na linha de token
+             precisa saber de qual token, e o mint sozinho nao diz. */
+          simbolos: Object.fromEntries(
+            Object.keys(m.tokens).map((mint) => [mint, simboloDoMint(mint)])),
+          valorUsd: (() => {
             let t = 0;
             for (const [mint, qtd] of Object.entries(m.tokens)) {
               const p = precoEm(mint, m.quando);

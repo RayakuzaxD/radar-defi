@@ -33,7 +33,12 @@ assert "${" not in copia, "interpolacao na copia seria executada pelo servidor"
 P = RAIZ + "/src/painel.js"
 s = io.open(P, encoding="utf-8").read()
 
-marcador = "NAO EDITE AQUI"
+# O MARCADOR TEM QUE SER UNICO, e quase nao foi: quando a copia do livro
+# nasceu, os dois blocos passaram a conter "NAO EDITE AQUI" e este porte
+# substituiu o bloco ERRADO — apagou o livro inteiro e deixou o cabecalho dele
+# em cima do conteudo do patrimonio. A suite pegou; a tela nao teria pegado.
+marcador = "COPIA LITERAL DE src/patrimonio.js"
+
 i = s.index("*/", s.index(marcador)) + 2
 f = s.rindex("/*", 0, s.index("FIM DA COPIA DE src/patrimonio.js"))
 s = s[:i] + "\n" + copia + "\n" + s[f:]

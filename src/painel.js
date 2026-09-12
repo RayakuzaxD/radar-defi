@@ -2971,6 +2971,228 @@ function temLancamento(f) {
     : (f.valor != null && f.valor !== "");
 }
 
+/* >>>>> COPIA LITERAL DE src/livro.js — NAO EDITE AQUI <<<<<
+ *
+ * UM LUGAR SO DECIDE o que e lucro e o que e dinheiro andando. Esta copia
+ * existe porque o navegador nao importa modulo, e o teste de concordancia
+ * a compara com src/livro.js caractere a caractere.
+ *
+ * Pra mudar a regra, mude src/livro.js e rode portar-livro.py. */
+const NOVO = "novo";
+const REMANEJO = "remanejo";
+const RENDIMENTO = "rendimento";
+
+/* 'soODiaNoLivro' e nao 'soODia': patrimonio.js tem uma funcao com o mesmo
+   nome, e no navegador as duas copias moram no MESMO escopo — dois 'const' com
+   o mesmo nome derrubam a pagina inteira. Nome de ajudante privado num modulo
+   nao e privado depois da copia. */
+const soODiaNoLivro = (d) => String(d || "").slice(0, 10);
+
+/* Um movimento tem o outro lado visível? Só então ele é remanejo. */
+function temOutroLado(m) {
+  if (m?.daCadeia) return true;
+  const qa = Number(m?.qtd_a), qb = Number(m?.qtd_b);
+  return !!((m?.simbolo_a && qa > 0) || (m?.simbolo_b && qb > 0));
+}
+
+/* A ESPÉCIE DE UM MOVIMENTO. Esta função é a única que responde isto.
+ *
+ * 'ehPosicao' diz se a linha do movimento é uma posição na cadeia. Vem de
+ * fora porque o movimento não sabe: ele só tem a chave. */
+function especieDo(m, ehPosicao) {
+  if (!m) return null;
+  if (m.tipo === "colheita") return RENDIMENTO;
+  if (m.tipo !== "aporte" && m.tipo !== "saque") return null;
+  if (!ehPosicao) return NOVO;
+  return temOutroLado(m) ? REMANEJO : NOVO;
+}
+
+/* O valor com sinal, do ponto de vista da LINHA: positivo entrou nela.
+ *
+ * Repare que a colheita tem valor e não tem espécie de fluxo. Os dois são
+ * verdade ao mesmo tempo: as moedas chegaram (mexem na quantidade) e não são
+ * dinheiro de fora (não mexem no custo). Confundir isso apagaria o lucro dele
+ * no exato momento em que ele o realiza. */
+function valorDo(m) {
+  const v = Number(m?.valor_usd);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return m.tipo === "saque" ? -v : v;
+}
+
+/* ---------------------------------------------------------------------------
+ * O LIVRO
+ *
+ * Entra a carteira, os lançamentos dele e o que a cadeia contou. Sai UMA lista
+ * de eventos, cada um já classificado, e os índices que as contas precisam.
+ *
+ * Depois disto, nenhuma conta olha para 'tipo' de movimento nem decide nada:
+ * elas perguntam ao livro. */
+function montarLivro({ linhas, movimentos, daCadeia } = {}) {
+  const posicoes = new Set(
+    (linhas || []).filter((l) => l?.posicao && l?.chave).map((l) => l.chave));
+
+  /* Quais posições a cadeia explica. Nelas, o que ele lançou sai de cena. */
+  const comCadeia = new Set(
+    (daCadeia || []).filter((m) => m?.chave).map((m) => m.chave));
+
+  const eventos = [];
+  const guardar = (m, deOnde) => {
+    const ehPosicao = posicoes.has(m?.chave);
+    const especie = especieDo(m, ehPosicao);
+    if (!especie) return;
+    eventos.push({
+      chave: m.chave,
+      quando: soODiaNoLivro(m.quando),
+      usd: valorDo(m),
+      tipo: m.tipo,
+      especie,
+      ehPosicao,
+      deOnde,
+      qtd_a: m.qtd_a ?? null, simbolo_a: m.simbolo_a ?? null,
+      qtd_b: m.qtd_b ?? null, simbolo_b: m.simbolo_b ?? null,
+    });
+  };
+
+  for (const m of movimentos || []) {
+    /* A CADEIA MANDA INTEIRA: onde ela falou, o lançamento dele cala. */
+    if (comCadeia.has(m?.chave)) continue;
+    guardar(m, "lancamento");
+  }
+  for (const m of daCadeia || []) guardar({ ...m, daCadeia: true }, "cadeia");
+
+  eventos.sort((a, b) => (a.quando < b.quando ? -1 : a.quando > b.quando ? 1 : 0));
+
+  const porChave = new Map();
+  for (const e of eventos) {
+    if (!porChave.has(e.chave)) porChave.set(e.chave, []);
+    porChave.get(e.chave).push(e);
+  }
+
+  return { eventos, porChave, posicoes, comCadeia };
+}
+
+const dentro = (e, de, ate) => (!de || e.quando > de) && (!ate || e.quando <= ate);
+
+/* O DINHEIRO NOVO no período — o único que o rendimento do patrimônio desconta.
+ *
+ * Remanejo não entra (o total não mudou) e rendimento não entra (é o lucro,
+ * não um fluxo). */
+function dinheiroNovo(livro, de, ate) {
+  let total = 0;
+  for (const e of livro?.eventos || []) {
+    if (e.especie === NOVO && dentro(e, de, ate)) total += e.usd;
+  }
+  return total;
+}
+
+/* O dinheiro novo por dia, que é o formato que a série do rendimento pede. */
+function novoPorDia(livro) {
+  const fora = {};
+  for (const e of livro?.eventos || []) {
+    if (e.especie !== NOVO || !e.usd) continue;
+    fora[e.quando] = (fora[e.quando] || 0) + e.usd;
+  }
+  return fora;
+}
+
+/* O FLUXO DE UMA LINHA, que é outra pergunta.
+ *
+ * Pro patrimônio, fechar pool não é saída — o dinheiro fica. Pra LINHA da
+ * pool, é: o resultado dela é o que voltou menos o que entrou. As duas
+ * perguntas convivem porque são perguntas diferentes, e é por isso que elas
+ * têm nomes diferentes aqui. Chamar as duas de "fluxo" foi metade do meu
+ * problema. */
+function fluxoDaLinha(livro, chave, de, ate) {
+  let total = 0;
+  for (const e of livro?.porChave?.get(chave) || []) {
+    if (e.especie === RENDIMENTO) continue;
+    if (dentro(e, de, ate)) total += e.usd;
+  }
+  return total;
+}
+
+/* O que a linha COLHEU no período: lucro realizado, e só ele. */
+function colheitaDaLinha(livro, chave, de, ate) {
+  let total = 0;
+  for (const e of livro?.porChave?.get(chave) || []) {
+    if (e.especie === RENDIMENTO && dentro(e, de, ate)) total += Math.abs(e.usd);
+  }
+  return total;
+}
+
+/* AS SOMBRAS: as moedas que entraram ou saíram de uma linha de TOKEN por causa
+ * de uma posição.
+ *
+ * A linha de token segue a carteira e muda sozinha quando uma pool devolve ou
+ * consome moedas. Sem isto, a reconstrução do passado põe o mesmo dinheiro na
+ * pool E na linha ao mesmo tempo.
+ *
+ * Só remanejo e rendimento geram sombra: o dinheiro NOVO veio de fora e nunca
+ * esteve em linha nenhuma. */
+function sombrasPorToken(livro) {
+  const fora = new Map();
+  for (const e of livro?.eventos || []) {
+    if (!e.ehPosicao) continue;
+    if (e.especie === NOVO) continue;
+    for (const [qtd, simbolo] of [[e.qtd_a, e.simbolo_a], [e.qtd_b, e.simbolo_b]]) {
+      const q = Number(qtd);
+      if (!Number.isFinite(q) || q <= 0 || !simbolo) continue;
+      const chave = String(simbolo).toUpperCase();
+      if (!fora.has(chave)) fora.set(chave, []);
+      /* Tipo INVERTIDO: o que saiu da pool entrou na linha, e vice-versa. */
+      fora.get(chave).push({
+        quando: e.quando,
+        tipo: e.usd < 0 ? "aporte" : "saque",
+        qtd_a: q, valor_usd: 1, sombra: true,
+      });
+    }
+  }
+  return fora;
+}
+
+/* O REMANEJO QUE TOCOU UMA LINHA DE TOKEN, em dólar.
+ *
+ * Na decomposição por linha, remanejo CONTA — e aqui está a sutileza que me
+ * escapou duas vezes. No total do patrimônio ele não conta, porque o dinheiro
+ * que sai de uma linha entra noutra e os dois se cancelam. Mas a linha de USDC
+ * sozinha não sabe disso: ela viu o dinheiro ir embora.
+ *
+ * Sem isto, a linha de USDC aparecia com "−US$ 177,47" de prejuízo no dia em
+ * que ele fundou as pools com esse USDC. O dinheiro não sumiu — mudou de
+ * lugar, e o lugar novo está três linhas abaixo na mesma tela.
+ *
+ * O valor sai do RATEIO do evento pelos tokens que ele moveu: uma pool de par
+ * move dois, e cada linha responde pela parte dela. 'precoEm(simbolo, dia)'
+ * dá o preço; sem ele, a parte não entra e quem pergunta trata como
+ * incompleto. */
+function remanejoDoToken(livro, simbolo, de, ate, precoEm) {
+  if (!simbolo || typeof precoEm !== "function") return 0;
+  const alvo = String(simbolo).toUpperCase();
+  let total = 0;
+  for (const e of livro?.eventos || []) {
+    if (e.especie !== REMANEJO && e.especie !== RENDIMENTO) continue;
+    if (!dentro(e, de, ate)) continue;
+    for (const [qtd, s] of [[e.qtd_a, e.simbolo_a], [e.qtd_b, e.simbolo_b]]) {
+      const q = Number(qtd);
+      if (!Number.isFinite(q) || q <= 0) continue;
+      if (String(s || "").toUpperCase() !== alvo) continue;
+      const p = precoEm(alvo, e.quando);
+      if (!(p > 0)) continue;
+      /* Sinal invertido: o que saiu da pool ENTROU na linha. */
+      total += (e.usd < 0 ? q : -q) * p;
+    }
+  }
+  return total;
+}
+
+/* A posição foi explicada pela cadeia? Quem sabe disso não precisa mais
+ * aproximar de onde veio o dinheiro dela. */
+function temRastro(livro, chave) {
+  return !!livro?.comCadeia?.has(chave);
+}
+
+/* >>>>> FIM DA COPIA DE src/livro.js <<<<< */
+
 /* >>>>> COPIA LITERAL DE src/patrimonio.js — NAO EDITE AQUI <<<<<
  *
  * A conta do rendimento roda no navegador porque os numeros dele (quantas
@@ -2979,7 +3201,7 @@ function temLancamento(f) {
  * quando a duplicacao e obrigada, o teste obriga a concordar (5.3):
  * testar-patrimonio.js compara ESTE trecho com o modulo caractere a
  * caractere (crases viram apostrofos, porque crase aqui mata a pagina).
- * Pra mudar a conta, mude src/patrimonio.js e rode o porte do painel. */
+ * Pra mudar a conta, mude src/patrimonio.js e rode portar-patrimonio.py. */
 const JANELAS = [
   { chave: "24h", nome: "24 horas", dias: 1 },
   { chave: "1m", nome: "1 mês", dias: 30 },
@@ -3115,6 +3337,52 @@ function quantidadeNaData(qtdHoje, movimentos, precoEm, data) {
   return q < -1e-12 ? null : Math.max(0, q);
 }
 
+/* A SOMBRA SE APLICA SÓ ATÉ ONDE CABE — e isto apagou a tela dele.
+ *
+ * A sombra diz "estas moedas entraram na linha quando a pool devolveu". Mas ele
+ * fechou a pool e pôs o dinheiro em OUTRA pool no mesmo minuto: a linha de SOL
+ * ficou com 0,016 e a sombra queria descontar 1,0266. A reconstrução ia a
+ * negativo, virava null, e as quatro janelas sumiram de uma vez — "sem preço de
+ * algum dia" em todas, que nem era o motivo.
+ *
+ * A diferença entre os dois casos é real e vale a separação:
+ *
+ *   movimento LANÇADO que dá negativo   história incompleta → null, e a janela
+ *                                        some. É honesto: falta informação.
+ *   SOMBRA que dá negativo               o dinheiro saiu da linha DEPOIS, pra
+ *                                        outra pool. Não falta informação —
+ *                                        falta rastrear, e rastrear cadeia de
+ *                                        pool em pool é outro problema. Aplica
+ *                                        o que cabe e segue.
+ *
+ * Apagar quatro janelas por causa de um encadeamento de pool é trocar um número
+ * quase certo por nenhum número. */
+function aplicarSombras(q0, sombras, corte) {
+  let q = q0;
+  for (const m of sombras) {
+    const quando = soODia(m?.quando);
+    if (!quando || quando <= corte) continue;
+    const usd = mexeNaQuantidade(m);
+    if (!usd) continue;
+    const qm = Number(m?.qtd_a);
+    if (!Number.isFinite(qm) || qm <= 0) continue;
+    q -= (usd < 0 ? -qm : qm);
+  }
+  /* O CORTE É NO FIM, E NÃO A CADA PASSO — e a diferença apagou uma tela.
+   *
+   * A primeira versão cortava a cada sombra ("só até onde cabe"), e o
+   * resultado dependia da ORDEM: a sombra do fechamento zerava a linha de SOL,
+   * e a sombra do depósito que veio depois somava 1,03 em cima do zero. A
+   * linha aparecia com um SOL inteiro num dia em que ele tinha dois
+   * centésimos, e a soma das partes ficava US$ 80 longe do total.
+   *
+   * Com a cadeia contando todos os eventos, a conta fecha sozinha e não
+   * precisa de corte no meio. O corte final fica como rede: se ainda assim der
+   * negativo, é história incompleta, e zero erra menos que um número negativo
+   * de moedas. */
+  return Math.max(0, q);
+}
+
 /* O VALOR DA CARTEIRA INTEIRA NUMA DATA.
  *
  * Três tipos de linha, três tratamentos, e os três declaram o que não sabem:
@@ -3130,7 +3398,8 @@ function quantidadeNaData(qtdHoje, movimentos, precoEm, data) {
  * um mês pra cima isso não toca em nada — nenhuma posição dele tem mais de
  * quatro dias — mas o dia em que tiver, o número vai ser conservador, e é o
  * lado certo pra errar. */
-function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
+function valorNaData({ linhas, movimentos, precoEm, cambioEm, daCadeia,
+  detalhado = false }, data) {
   const corte = soODia(data);
   if (!corte || !Array.isArray(linhas)) return null;
 
@@ -3161,9 +3430,40 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
    * pra ler a cadeia em vez de estimar. */
   const chavesDePosicao = new Set(
     linhas.filter((l) => l?.posicao && l?.chave).map((l) => l.chave));
+
+  /* OS EVENTOS DA CADEIA ENTRAM AQUI, e eles são o que faz a conta fechar.
+   *
+   * O lançamento dele não existe para a maioria das mexidas: quem funda uma
+   * pool com USDC que já estava na carteira não lança nada — a linha míngua
+   * sozinha. Sem saber disso, a reconstrução mantinha o USDC no passado E
+   * contava a pool, ou o contrário, e a janela de 24 horas dele deu −US$ 201
+   * num dia em que nada disso aconteceu.
+   *
+   * A cadeia conta: cada depósito e cada retirada, com a quantidade e o
+   * símbolo de cada token. Daí saem sombras exatas, e o dinheiro para de
+   * aparecer e sumir entre as linhas.
+   *
+   * Eles NÃO viram fluxo: são remanejamento. Entram só como sombra. */
+  const paraSombra = (movimentos || []).filter(
+    (m) => chavesDePosicao.has(m?.chave) && (m.tipo === "aporte" || m.tipo === "saque"),
+  ).concat(daCadeia || []);
+
+  /* A POSIÇÃO QUE A CADEIA EXPLICA NÃO É DEVOLVIDA AO PASSADO.
+   *
+   * "Devolver ao passado" era uma aproximação pra uma pergunta que eu não
+   * sabia responder: de onde veio o dinheiro desta pool? Sem resposta, eu
+   * assumia que estava na carteira e somava o valor de entrada ao passado.
+   *
+   * Com o evento da cadeia eu SEI de onde veio: a sombra devolve as moedas à
+   * linha de token exata. Manter as duas coisas conta o mesmo dinheiro duas
+   * vezes — foi o que fez a janela de 24 horas dele sair de −201 pra −481
+   * quando liguei a cadeia. A aproximação existe pra quando falta o fato; com
+   * o fato, ela sai. */
+  const explicadasPelaCadeia = new Set(
+    (daCadeia || []).filter((m) => m?.chave && m.tipo === "aporte").map((m) => m.chave));
+
   const sombras = new Map();
-  for (const m of movimentos || []) {
-    if (!chavesDePosicao.has(m?.chave)) continue;
+  for (const m of paraSombra) {
     if (m.tipo !== "aporte" && m.tipo !== "saque") continue;
     for (const [qtd, simbolo] of [[m.qtd_a, m.simbolo_a], [m.qtd_b, m.simbolo_b]]) {
       const q = Number(qtd);
@@ -3175,11 +3475,32 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
         tipo: m.tipo === "saque" ? "aporte" : "saque",
         valor_usd: 1, // só o sinal importa: a quantidade manda
         qtd_a: q,
+        sombra: true,
       });
     }
   }
 
   let total = 0;
+  /* A DECOMPOSIÇÃO SAI DAQUI, e não de uma segunda função.
+   *
+   * O painel tinha uma cópia paralela desta conta pra responder "de onde veio
+   * o ganho de cada janela" — e foi a cópia que ficou pra trás em TODO
+   * conserto. A última vez mostrou as pools novas perdendo o valor inteiro
+   * num dia em que o total estava certo: o número de cima certo, o de baixo
+   * errado, os dois na mesma tela.
+   *
+   * Quem quer o detalhe pede o detalhe da MESMA passada. Duas leituras da
+   * mesma carteira não podem discordar se só existe uma leitura. */
+  const porLinha = [];
+  const anotar = (l, v) => {
+    porLinha.push({ chave: l?.chave || null, valor: v,
+      /* O token viaja junto: quem decompõe precisa saber de qual moeda a
+         linha é, pra achar o remanejo que passou por ela. */
+      token: l?.token || null,
+      nome: l?.fatia || l?.token || (l?.posicao ? "posição" : l?.moeda) || "linha" });
+    return v;
+  };
+
   for (const l of linhas) {
     const movs = porChave.get(l?.chave) || [];
 
@@ -3190,7 +3511,7 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
       if (!Number.isFinite(v)) return null;
 
       if (entrou && entrou <= corte) {
-        if (fechou && fechou <= corte) continue; // já não existia na data
+        if (fechou && fechou <= corte) { anotar(l, 0); continue; }
 
         /* A ENTRADA MAIS O QUE ELE MEXEU DEPOIS. Ele aumenta pools e tira
          * pedaços delas ("posso querer aumentar uma pool... posso retirar
@@ -3204,7 +3525,7 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
           if (!quando || quando <= entrou || quando > corte) continue;
           comMexidas += fluxoExterno(m);
         }
-        total += Math.max(0, comMexidas);
+        total += anotar(l, Math.max(0, comMexidas));
         continue;
         /* 'fluxoExterno' e não 'fluxoDoPatrimonio' aqui de propósito: a
            pergunta é quanto a POSIÇÃO valia, e pra ela o depósito entrou de
@@ -3237,7 +3558,7 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
        * carteira antes de hoje: a quantidade líquida de hoje já o contém, a
        * reconstrução que parte de hoje já o carrega pro passado, e devolver
        * a entrada de novo contaria o mesmo dinheiro duas vezes. */
-      if (!fechou) {
+      if (!fechou && !explicadasPelaCadeia.has(l.chave)) {
         let deFora = 0;
         for (const m of movs) {
           const quando = soODia(m?.quando);
@@ -3245,19 +3566,22 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
           const f = fluxoExterno(m);
           if (f > 0) deFora += f;
         }
-        total += Math.max(0, v - deFora);
+        total += anotar(l, Math.max(0, v - deFora));
+      } else {
+        anotar(l, 0);
       }
       continue;
     }
 
     if (l?.token != null && l?.quantidade != null) {
-      const comSombras = movs.concat(
-        sombras.get(String(l.token).toUpperCase()) || []);
-      const q = quantidadeNaData(l.quantidade, comSombras, (d) => precoEm(l.token, d), corte);
-      if (q == null) return null;
+      /* Os lançamentos DELE primeiro (e eles podem dizer "não sei", virando
+         null); as sombras depois, e elas nunca derrubam a janela. */
+      const q0 = quantidadeNaData(l.quantidade, movs, (d) => precoEm(l.token, d), corte);
+      if (q0 == null) return null;
+      const q = aplicarSombras(q0, sombras.get(String(l.token).toUpperCase()) || [], corte);
       const p = precoEm(l.token, corte);
       if (!(p > 0)) return null;
-      total += q * p;
+      total += anotar(l, q * p);
       continue;
     }
 
@@ -3267,14 +3591,14 @@ function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
       if (l.moeda === "BRL") {
         const c = cambioEm(corte); // dólares por real
         if (!(c > 0)) return null;
-        total += v * c;
+        total += anotar(l, v * c);
       } else {
-        total += v;
+        total += anotar(l, v);
       }
       continue;
     }
   }
-  return total;
+  return detalhado ? { total, porLinha } : total;
 }
 
 /* O RENDIMENTO DE UM PERÍODO, com o aporte neutralizado.
@@ -3366,6 +3690,115 @@ function lucroDesdeOComeco(valorHoje, movimentos) {
   };
 }
 
+/* ---------------------------------------------------------------------------
+ * O GANHO SOMADO PEÇA A PEÇA — e por que este caminho é melhor que o outro
+ *
+ * A conta de cima reconstrói o PATRIMÔNIO INTEIRO em cada dia e compara. É
+ * exata quando dá certo, e ela exige uma coisa que o mundo real não entrega:
+ * saber onde cada dólar estava em cada dia. Um SOL que ele transferiu de uma
+ * corretora, um swap que virou outro token, uma pool que financiou outra — cada
+ * caminho não rastreado infla ou esvazia o passado, e o erro aparece como
+ * rendimento que não existiu.
+ *
+ * Eu tentei tapar isso três vezes (devolver a posição ao passado, sombras nas
+ * linhas de token, corte quando a sombra não cabia) e cada tapa consertava uma
+ * tela e quebrava outra. A última rodou com a carteira dele: as partes ficaram
+ * certas e o total foi pra +US$ 80 num dia de −US$ 21.
+ *
+ * ESTE CAMINHO NÃO PERGUNTA ONDE O DINHEIRO ESTAVA. Ele soma o que cada peça
+ * ganhou, e ganho de peça não depende de rastreamento:
+ *
+ *   linha de token   quantos ele tinha em cada dia, vezes o quanto o preço
+ *                    andou naquele dia. A quantidade sai dos lançamentos DELE
+ *                    (compras e vendas reais), que são a parte confiável.
+ *
+ *   posição          o que ela vale hoje menos o que entrou nela, limitado ao
+ *                    período. Pool que nasceu e morreu dentro da janela entrega
+ *                    o resultado inteiro; pool mais velha entrega a diferença.
+ *
+ * Remanejo some sozinho: o dinheiro que sai de uma linha e entra numa pool não
+ * é ganho em lugar nenhum, e não precisa ser descontado em lugar nenhum. É a
+ * regra dele — "lucro é rendimento de tokens ou taxa de pools" — virando a
+ * FORMA da conta, em vez de uma correção aplicada depois.
+ *
+ * E a soma das partes é o total POR CONSTRUÇÃO: não há um total calculado por
+ * outro caminho pra discordar dela. */
+function ganhoPeloPreco(linha, movimentos, precoEm, dias) {
+  if (!linha?.token || linha.quantidade == null) return null;
+  let total = 0;
+  for (let i = 1; i < dias.length; i++) {
+    const ontem = dias[i - 1], hoje = dias[i];
+    /* A quantidade do dia anterior: é ela que atravessou a variação. Comprar
+       hoje não faz o preço de ontem render. */
+    const q = quantidadeNaData(linha.quantidade, movimentos, (d) => precoEm(linha.token, d), ontem);
+    if (q == null) return null;
+    const p0 = precoEm(linha.token, ontem), p1 = precoEm(linha.token, hoje);
+    if (!(p0 > 0) || !(p1 > 0)) return null;
+    total += q * (p1 - p0);
+  }
+  return total;
+}
+
+/* O ganho de uma linha de valor digitado (a reserva em real): só o câmbio. */
+function ganhoPeloCambio(linha, cambioEm, dias) {
+  if (linha?.moeda !== "BRL" || linha?.valor == null) return null;
+  const v = Number(linha.valor);
+  if (!Number.isFinite(v)) return null;
+  const c0 = cambioEm(dias[0]), c1 = cambioEm(dias[dias.length - 1]);
+  if (!(c0 > 0) || !(c1 > 0)) return null;
+  return v * (c1 - c0);
+}
+
+/* O ganho de uma posição no período.
+ *
+ * 'vivoHoje' é o valor que a cadeia diz agora; 'eventos' são as mexidas dela
+ * (do livro, já classificadas). O que ela rendeu é o que vale hoje menos o que
+ * entrou, e o período recorta: mexida de antes do período já está no valor de
+ * abertura dele. */
+function ganhoDaPosicao(linha, eventos, vivoHoje, de, ate) {
+  if (!linha?.posicao) return null;
+  const entrou = soODia(linha.data_entrada);
+  const fechou = soODia(linha.fechada_em);
+
+  /* Fora da janela: não existia ainda, ou já tinha fechado antes dela. */
+  if (entrou && entrou > ate) return 0;
+  if (fechou && fechou <= de) return 0;
+
+  const base = Number(linha.valor_entrada);
+  if (!Number.isFinite(base)) return null;
+
+  /* Quanto ela valia no começo da janela: a entrada mais as mexidas até lá.
+     Se ela nasceu dentro da janela, começou do zero. */
+  let noComeco = 0;
+  if (entrou && entrou <= de) {
+    noComeco = base;
+    for (const e of eventos || []) {
+      if (e.quando > de) continue;
+      if (e.especie === RENDIMENTO_NO_LIVRO) continue;
+      if (e.quando > entrou) noComeco += e.usd;
+    }
+  }
+
+  /* E no fim: o valor vivo, ou zero se fechou dentro da janela. */
+  const noFim = (fechou && fechou <= ate) ? 0
+    : (Number.isFinite(vivoHoje) ? vivoHoje : base);
+
+  /* O que entrou e saiu DELA no período — isso não é ganho dela. */
+  let mexidas = 0;
+  for (const e of eventos || []) {
+    if (e.quando <= de || e.quando > ate) continue;
+    if (e.especie === RENDIMENTO_NO_LIVRO) continue;
+    mexidas += e.usd;
+  }
+
+  return noFim - noComeco - mexidas;
+}
+
+/* O nome da espécie vem do livro; repetido aqui como texto pra este módulo não
+   depender dele — os dois viajam pro navegador e a ordem de carga não é
+   garantida. Se o livro mudar o nome, o teste de concordância avisa. */
+const RENDIMENTO_NO_LIVRO = "rendimento";
+
 /* >>>>> FIM DA COPIA DE src/patrimonio.js <<<<< */
 
 /* ---------------------------------------------------------------------------
@@ -3386,8 +3819,9 @@ function pedirSeriesDePrecos() {
   /* SO DEPOIS DOS LANCAMENTOS: a janela de busca e medida pelo lancamento
      mais velho, e pedir antes deles chegarem gravaria uma serie curta demais
      no cache — foi assim que a conta dele apareceu "incompleta" sem motivo
-     visivel: o primeiro aporte e de fev/2025 e a serie parava 370 dias
-     atras. */
+     visivel: o primeiro aporte e de fev/2025 e a serie parava 370 dias atras.
+     Aqui esperar E certo: os lancamentos chegam junto da carteira e chamam
+     desenhar. */
   if (!movsCarregados) return;
   var tokens = {};
   (fatias || []).forEach(function (f) {
@@ -3495,8 +3929,14 @@ function lucroDaLinha(l) {
   if (!serieDePrecos || !l || !l.f) return null;
   var movsDaqui = (l.f.chave && movimentos[l.f.chave]) || [];
 
+  /* QUEM DECIDE E O LIVRO, e so ele. O deposito que criou a pool quase nunca
+     foi lancado, e sem ele o custo sai zerado — a pool inteira viraria lucro.
+     O livro ja juntou lancamento e cadeia, e ja sabe o que e remanejo. */
+  var eventos = (livroAtual && livroAtual.porChave.get(l.f.chave)) || [];
   var custoLancado = 0;
-  movsDaqui.forEach(function (m) { custoLancado += fluxoExterno(m); });
+  eventos.forEach(function (e) {
+    if (e.especie !== "rendimento") custoLancado += e.usd;
+  });
 
   if (l.f.posicao) {
     if (linhaFechada(l.f)) return { lucro: 0, semHistoria: 0, custo: 0 };
@@ -3516,12 +3956,10 @@ function lucroDaLinha(l) {
        Soma-lo de novo cobraria o mesmo dinheiro duas vezes. */
     var entrou = String(l.f.data_entrada || "").slice(0, 10);
     var mexidasDepois = 0, aportadoNaEntrada = 0;
-    movsDaqui.forEach(function (m) {
-      var f = fluxoExterno(m);
-      if (!f) return;
-      var quando = String(m.quando || "").slice(0, 10);
-      if (entrou && quando > entrou) mexidasDepois += f;
-      else if (f > 0) aportadoNaEntrada += f;
+    eventos.forEach(function (e) {
+      if (e.especie === "rendimento" || !e.usd) return;
+      if (entrou && e.quando > entrou) mexidasDepois += e.usd;
+      else if (e.usd > 0) aportadoNaEntrada += e.usd;
     });
     var base = Math.max(0, entrada + mexidasDepois);
     var descoberta = Math.max(0, entrada - aportadoNaEntrada);
@@ -3651,89 +4089,62 @@ function fraseDoLucro(v, custo) {
   return '<span class="' + classeDoSinal(v) + '">' + texto + '</span>';
 }
 
-/* O VALOR DE UMA LINHA SO numa data — a mesma conta do valorNaData, fatiada,
- * pra responder a pergunta que ele fez olhando o -107 de 24 horas: "da onde?".
- * As regras sao as mesmas da conta total, linha a linha; a soma das fatias e o
- * total por construcao. O parametro ehHoje liga o valor vivo da posicao. */
-function valorDaLinhaEm(l, diaAlvo, ehHoje) {
-  if (!l || !l.f) return null;
-  var movsDaqui = (l.f.chave && movimentos[l.f.chave]) || [];
+/* O GANHO DE CADA PECA NUMA JANELA — e a soma delas E o total.
+ *
+ * Nao ha um total calculado por outro caminho pra discordar da soma. Foi o que
+ * ele mandou consertar: "cria uma logica pra isso nao confundir mais". A
+ * confusao vinha de haver duas contas; agora ha uma.
+ *
+ * Ninguem aqui pergunta ONDE o dinheiro estava — so quanto cada peca ganhou.
+ * Remanejo some sozinho, porque nao e ganho em lugar nenhum. */
+function ganhosDaJanela(c, dias, livro) {
+  var de = dias[0], ate = dias[dias.length - 1];
+  var vivo = {};
+  ((c && c.linhas) || []).forEach(function (l) {
+    if (l.f && l.f.chave && l.emUSD != null && isFinite(l.emUSD)) vivo[l.f.chave] = l.emUSD;
+  });
 
-  if (l.f.posicao) {
-    var entrou = String(l.f.data_entrada || "").slice(0, 10);
-    var fechou = String(l.f.fechada_em || "").slice(0, 10);
-    var entrada = Number(l.f.valor_entrada);
-    if (!isFinite(entrada)) return null;
-    if (entrou && entrou <= diaAlvo) {
-      if (fechou && fechou <= diaAlvo) return 0;
-      if (ehHoje && l.emUSD != null && isFinite(l.emUSD)) return l.emUSD;
-      /* A mesma regra do modulo: a entrada mais as mexidas lancadas ate a
-         data. Sem isso, uma janela aberta depois de um aporte na pool
-         partiria do valor velho e o aporte viraria valorizacao. */
-      var comMexidas = entrada;
-      movsDaqui.forEach(function (m) {
-        var quando = String(m.quando || "").slice(0, 10);
-        if (!quando || quando <= entrou || quando > diaAlvo) return;
-        comMexidas += fluxoExterno(m);
-      });
-      return Math.max(0, comMexidas);
+  var pedacos = [], total = 0, incompleto = false;
+  (fatias || []).forEach(function (f) {
+    var g = null;
+    if (f.posicao) {
+      g = ganhoDaPosicao(f, livro.porChave.get(f.chave) || [], vivo[f.chave], de, ate);
+    } else if (f.token && f.quantidade != null) {
+      g = ganhoPeloPreco(f, movimentos[f.chave] || [], precoEm, dias);
+    } else if (f.moeda === "BRL") {
+      g = ganhoPeloCambio(f, cambioEm, dias);
+    } else {
+      g = 0;   // valor digitado em dolar nao rende sozinho
     }
-    if (fechou) return 0;
-    var deFora = 0;
-    movsDaqui.forEach(function (m) {
-      var quando = String(m.quando || "").slice(0, 10);
-      if (!quando || quando <= diaAlvo) return;
-      var f = fluxoExterno(m);
-      if (f > 0) deFora += f;
-    });
-    return Math.max(0, entrada - deFora);
-  }
+    if (g == null) { incompleto = true; return; }
+    total += g;
+    pedacos.push({ nome: f.fatia || f.token || (f.posicao ? "posição" : f.moeda) || "linha",
+      ganho: g });
+  });
 
-  if (l.f.token && l.f.quantidade != null) {
-    var q = quantidadeNaData(l.f.quantidade, movsDaqui, function (d) {
-      return precoEm(l.f.token, d);
-    }, diaAlvo);
-    if (q == null) return null;
-    var p = precoEm(l.f.token, diaAlvo);
-    if (!(p > 0)) return null;
-    return q * p;
-  }
-
-  if (l.f.valor != null) {
-    var vv = Number(l.f.valor);
-    if (!isFinite(vv)) return null;
-    if (l.f.moeda === "BRL") {
-      var cx = cambioEm(diaAlvo);
-      return cx > 0 ? vv * cx : null;
-    }
-    return vv;
-  }
-  return 0;
+  pedacos.sort(function (a, b) { return Math.abs(b.ganho) - Math.abs(a.ganho); });
+  return { total: total, pedacos: pedacos, incompleto: incompleto };
 }
 
-/* De onde veio o ganho ou a perda de uma janela: a contribuicao de cada
- * linha, maiores primeiro. So os que passam de um dolar — centavo nao explica
- * nada. */
-function deOndeVeio(c, diaInicio, diaFim) {
-  var pedacos = [];
-  (c && c.linhas || []).forEach(function (l) {
-    var v0 = valorDaLinhaEm(l, diaInicio, false);
-    var v1 = valorDaLinhaEm(l, diaFim, true);
-    if (v0 == null || v1 == null) return;
-    var fluxo = 0;
-    var posicoesAqui = chavesDePosicao();
-    ((l.f.chave && movimentos[l.f.chave]) || []).forEach(function (m) {
-      var quando = String(m.quando || "").slice(0, 10);
-      if (quando > diaInicio && quando <= diaFim) {
-        fluxo += fluxoDoPatrimonio(m, posicoesAqui);
-      }
-    });
-    var lucro = v1 - v0 - fluxo;
-    if (Math.abs(lucro) < 1) return;
-    pedacos.push({ nome: String(l.f.fatia || l.f.token || "posição"), lucro: lucro });
+/* O dinheiro NOVO que entrou numa linha de token. Remanejo nao conta: o
+   dinheiro ja estava dentro do patrimonio. */
+function dinheiroNovoDaLinha(livro, chave, de, ate) {
+  var total = 0;
+  ((livro.porChave.get(chave)) || []).forEach(function (e) {
+    if (e.especie !== "novo") return;
+    if (e.quando <= de || e.quando > ate) return;
+    total += e.usd;
   });
-  pedacos.sort(function (a, b) { return Math.abs(b.lucro) - Math.abs(a.lucro); });
-  return pedacos;
+  return total;
+}
+
+/* Todos os lancamentos dele, achatados. */
+function todosLancamentos() {
+  var fora = [];
+  Object.keys(movimentos).forEach(function (k) {
+    movimentos[k].forEach(function (m) { fora.push(m); });
+  });
+  return fora;
 }
 
 function blocoDoRendimento(c) {
@@ -3752,17 +4163,24 @@ function blocoDoRendimento(c) {
         ' linha(s) ainda sem valor lido ficaram de fora do total</div>'
       : "");
 
-  if (!serieDePrecos) {
+  if (!serieDePrecos || sombrasDaCadeia == null) {
     pedirSeriesDePrecos();
+    pedirSombrasDaCadeia();
+    /* A ESPERA DIZ O QUE FALTA. "Medindo…" eterno nao distingue "esta quase"
+       de "travou", e foi exatamente essa duvida que ele teve. */
+    var faltando = [];
+    if (!serieDePrecos) faltando.push("o preço de cada dia");
+    if (sombrasDaCadeia == null) faltando.push("as suas mexidas de pool na blockchain");
     return '<div class="resumoCaixa">' + cabecaDoTotal +
-      '<div class="fatoNota">medindo o rendimento — buscando o preço de cada dia…</div>' +
+      '<div class="fatoNota">medindo o rendimento — lendo ' +
+        faltando.join(" e ") + '…</div>' +
     '</div>';
   }
 
-  var todosMovs = [];
-  Object.keys(movimentos).forEach(function (k) {
-    movimentos[k].forEach(function (m) { todosMovs.push(m); });
-  });
+  var todosMovs = todosLancamentos();
+  /* O LIVRO, montado uma vez. Depois dele nenhuma conta decide sozinha o que e
+     lucro e o que e dinheiro andando — todas perguntam. */
+  var livro = montarLivroAgora();
 
   /* O ganho vivo das posicoes abertas, por cima do valor de entrada. A conta
      historica avalia posicao pela entrada (valor passado de pool nao existe em
@@ -3776,34 +4194,15 @@ function blocoDoRendimento(c) {
     }
   });
 
-  var fluxoPorDia = {};
-  var posicoesAqui = chavesDePosicao();
-  todosMovs.forEach(function (m) {
-    /* Do PATRIMONIO, e nao da posicao: fechar pool nao e dinheiro saindo do
-       bolso dele, e por isso nao pode virar lucro na compensacao. */
-    var f = fluxoDoPatrimonio(m, posicoesAqui);
-    if (!f) return;
-    var d = String(m.quando || "").slice(0, 10);
-    fluxoPorDia[d] = (fluxoPorDia[d] || 0) + f;
-  });
-
-  /* UMA serie de 366 dias; as janelas menores sao fatias dela. Um dia sem
-     preco vira valor null — e a janela que contem esse dia nao aparece, em
-     vez de aparecer errada. */
+  /* A SERIE DE 366 DIAS SAIU DAQUI, e a saida dela e o conserto.
+   *
+   * Ela reconstruia o PATRIMONIO INTEIRO em cada dia — e isso exige saber onde
+   * cada dolar estava, que o mundo real nao entrega. Rodando com a carteira
+   * dele, as partes ficavam certas e o total ia pra +US$ 80 num dia de −US$ 21.
+   *
+   * Agora cada peca entrega o ganho dela e a soma E o total. Nao ha um segundo
+   * caminho pra discordar do primeiro. */
   var agora = Date.now();
-  var serie = [];
-  for (var i = 365; i >= 0; i--) {
-    var dia = new Date(agora - i * 86400000).toISOString().slice(0, 10);
-    var v = valorNaData({
-      linhas: fatias, movimentos: todosMovs,
-      precoEm: precoEm, cambioEm: cambioEm,
-    }, dia);
-    serie.push({
-      dia: dia,
-      valor: v == null ? null : v + (i === 0 ? ajusteVivo : 0),
-      fluxo: fluxoPorDia[dia] || 0,
-    });
-  }
 
   var maisMenos = function (v) {
     if (privado) return "US$ " + TAPADO;
@@ -3812,37 +4211,35 @@ function blocoDoRendimento(c) {
 
   var linhasHtml = "";
   JANELAS.forEach(function (j) {
-    var fatia = serie.slice(serie.length - 1 - j.dias);
-    var inteira = true;
-    fatia.forEach(function (p) { if (p.valor == null) inteira = false; });
-    var r = inteira ? rendimentoDoPeriodo(fatia) : null;
-    if (!r) {
+    var dias = [];
+    for (var k = j.dias; k >= 0; k--) {
+      dias.push(new Date(agora - k * 86400000).toISOString().slice(0, 10));
+    }
+    var g = ganhosDaJanela(c, dias, livro);
+    if (g.incompleto) {
       linhasHtml += '<div class="fatoLinha"><span>' + j.nome +
         '</span><b class="vazio2">sem preço de algum dia</b></div>';
       return;
     }
-    /* A PORCENTAGEM E SOBRE O PATRIMONIO INTEIRO, e nao sobre a conta
-       encadeada — pedido dele olhando a tela: "preciso saber quanto ganhei e
-       quanto perdi EM RELACAO AO TOTAL do meu patrimonio". Perder 107 num
-       patrimonio de 2.400 e -4,5%, e e esse numero que conversa com o valor
-       grande la de cima. */
-    var sobreOTotal = r.fim > 0 ? (r.lucro / r.fim) * 100 : null;
+    /* A PORCENTAGEM E SOBRE O PATRIMONIO INTEIRO — pedido dele olhando a tela:
+       "preciso saber quanto ganhei e quanto perdi EM RELACAO AO TOTAL". */
+    var sobreOTotal = (c && c.total > 0)
+      ? (g.total / converterV(c.total, moedaVista, "USD", cotacao())) * 100 : null;
     linhasHtml += '<div class="fatoLinha"><span>' + j.nome + '</span>' +
-      '<b class="' + classeDoSinal(r.lucro) + '">' + maisMenos(r.lucro) +
-      (sobreOTotal != null ? ' · ' + umPct(sobreOTotal) + ' do total' : '') + '</b></div>';
+      '<b class="' + classeDoSinal(g.total) + '">' + maisMenos(g.total) +
+      (sobreOTotal != null && isFinite(sobreOTotal)
+        ? ' · ' + umPct(sobreOTotal) + ' do total' : '') + '</b></div>';
 
-    /* "EU PERDI 100 DOLS EM 24HRS? DA ONDE?" — a pergunta dele, respondida
-       na propria linha: as maiores contribuicoes da janela, com sinal. Fica
-       fora do modo privado: nomear as partes com valores e exatamente o que o
-       modo esconde. */
-    if (!privado && Math.abs(r.lucro) >= 1) {
-      var partes = deOndeVeio(c, r.deQuando, r.ateQuando);
-      if (partes.length) {
-        var mostradas = partes.slice(0, 3).map(function (p) {
-          return esc(p.nome) + " " + maisMenos(p.lucro);
-        }).join(" · ");
-        linhasHtml += '<div class="fatoNota">de onde: ' + mostradas +
-          (partes.length > 3 ? ' · e mais ' + (partes.length - 3) : '') + '</div>';
+    /* "EU PERDI 100 DOLS EM 24HRS? DA ONDE?" — a pergunta dele, respondida na
+       propria linha. As pecas somam o total por construcao. */
+    if (!privado && Math.abs(g.total) >= 1) {
+      var mostradas = g.pedacos.filter(function (p) { return Math.abs(p.ganho) >= 1; });
+      if (mostradas.length) {
+        linhasHtml += '<div class="fatoNota">de onde: ' +
+          mostradas.slice(0, 3).map(function (p) {
+            return esc(p.nome) + " " + maisMenos(p.ganho);
+          }).join(" · ") +
+          (mostradas.length > 3 ? ' · e mais ' + (mostradas.length - 3) : '') + '</div>';
       }
     }
   });
@@ -3880,6 +4277,11 @@ function blocoDoRendimento(c) {
       'da data em que foi lançado. Saque não conta como prejuízo. A conta é feita aqui ' +
       'no seu navegador — quantidade e valor não saem da sua sessão.</div>' +
     linhasHtml +
+    (semMexidasDaCadeia
+      ? '<div class="fatoNota">não consegui ler as suas mexidas de pool na ' +
+        'blockchain agora — as posições entram pelo valor de entrada, e o que ' +
+        'elas renderam pode estar incompleto.</div>'
+      : "") +
     '<div class="fatoQuando">posições valem a entrada no passado e o valor vivo hoje · ' +
       'preços diários do DefiLlama</div>' +
   '</div>';
@@ -7797,6 +8199,123 @@ function resultadoDoDinheiro(l) {
  * segundo, pelo mesmo valor. Preco de outro momento fabrica diferenca. */
 var daCadeia = {};            // chave -> { lancamentos, mexidas } ou "buscando"
 
+/* TODAS AS MEXIDAS DE TODAS AS POSICOES, numa busca so.
+ *
+ * A reconstrucao do patrimonio precisa disto, e nao da pergunta de uma
+ * posicao: so sabendo QUANDO cada dinheiro saiu de uma linha e entrou noutra e
+ * que o passado para de inflar. Sem isso, a janela de 24 horas dele deu
+ * -US$ 201 num dia em que o patrimonio mexeu -US$ 21 — o resto era pool nova
+ * aparecendo do nada no passado.
+ *
+ * Uma vez por abertura. Sao ~4 subrequisicoes por posicao, e elas nao mudam
+ * enquanto ele olha a tela. */
+var sombrasDaCadeia = null;   // lista de movimentos-sombra, ou null
+var sombrasBuscando = false;
+var semMexidasDaCadeia = false;  // a leitura da cadeia nao veio; a conta segue
+
+/* O LIVRO DA ULTIMA MONTAGEM.
+ *
+ * As caixinhas do B.A.R.C.A. sao desenhadas por outro caminho que nao passa
+ * pelo bloco do rendimento, e elas precisam da MESMA classificacao — senao a
+ * soma das caixinhas discorda do total logo acima, que foi metade do problema
+ * que ele mandou resolver. */
+var livroAtual = null;
+
+function montarLivroAgora() {
+  livroAtual = montarLivro({
+    linhas: fatias || [], movimentos: todosLancamentos(),
+    daCadeia: sombrasDaCadeia || [],
+  });
+  return livroAtual;
+}
+
+function pedirSombrasDaCadeia() {
+  if (sombrasBuscando || sombrasDaCadeia) return;
+
+  /* SEM CARTEIRA LIGADA NAO HA O QUE LER — e isto era um beco sem saida.
+   *
+   * A guarda antiga tinha um teste de carteira ligada e saia SEM MARCAR NADA. Se a
+   * carteira nao estivesse ligada (ou ainda nao tivesse carregado e ninguem
+   * mais chamasse desenhar), a lista de mexidas ficava null pra sempre e a tela
+   * esperava eternamente por um evento que nunca vinha. Ele viu: "e normal
+   * ficar muito tempo nessa tela?".
+   *
+   * O defeito e o de sempre neste projeto, com outra roupa: NULL SIGNIFICANDO
+   * DUAS COISAS — "ainda nao pedi" e "nao da pra pedir". Lista vazia responde
+   * a segunda e deixa a tela seguir; a receita 2.5 diz isso de outro jeito
+   * ("ausencia so vale como prova quando a leitura ficou completa"). */
+  if (!carteiraSolana) { sombrasDaCadeia = []; return; }
+
+  var lista = (fatias || []).filter(function (f) { return f.posicao; });
+  if (!lista.length) { sombrasDaCadeia = []; return; }
+  sombrasBuscando = true;
+
+  /* E UM PRAZO, porque promessa que nao resolve nao chama o catch. Vinte
+     segundos e muito mais que os tres que a rota leva; passou disso, a conta
+     segue com o que tem e a tela diz que seguiu. */
+  setTimeout(function () {
+    if (sombrasBuscando) {
+      sombrasBuscando = false;
+      sombrasDaCadeia = [];
+      semMexidasDaCadeia = true;
+      desenhar();
+    }
+  }, 20000);
+
+  var porPosicao = {};
+  lista.forEach(function (f) { porPosicao[f.posicao] = f.chave; });
+
+  fetch("/api/mexidas?v=${VERSAO}", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      dono: carteiraSolana,
+      posicoes: lista.map(function (f) { return f.posicao; }),
+    }),
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    /* UM MOVIMENTO POR EVENTO, com o VALOR de verdade.
+     *
+     * A primeira versao mandava pro livro as SOMBRAS (uma por token, com
+     * valor_usd: 1, porque so a quantidade importava pra elas). O livro leu
+     * esse 1 como se fosse o valor do evento, e a pool nova apareceu rendendo
+     * US$ 196 num dia em que ela so foi aberta: v1 cheio, fluxo quase zero.
+     *
+     * O livro precisa do evento INTEIRO — valor, quantidade e simbolo dos dois
+     * lados. As sombras ele gera sozinho, que e o trabalho dele. */
+    var fora = [];
+    ((j && j.mexidas) || []).forEach(function (m) {
+      var chave = porPosicao[m.posicao];
+      if (!chave || m.valorUsd == null) return;
+      var dia = new Date(m.quando * 1000).toISOString().slice(0, 10);
+      var mints = Object.keys(m.tokens || {});
+      var ev = {
+        chave: chave, quando: dia,
+        /* O SINAL DIZ O TIPO: positivo voltou pra carteira (saque da
+           posicao), negativo saiu dela (aporte). A colheita mantem o nome:
+           ela nao e fluxo, e o livro sabe disso. */
+        tipo: m.tipo === "colheita" ? "colheita"
+          : (m.valorUsd > 0 ? "saque" : "aporte"),
+        valor_usd: Math.abs(m.valorUsd),
+      };
+      mints.forEach(function (mint, i) {
+        var simbolo = (m.simbolos || {})[mint];
+        var qtd = Math.abs(m.tokens[mint]);
+        if (!simbolo || !qtd) return;
+        if (i === 0) { ev.qtd_a = qtd; ev.simbolo_a = simbolo; }
+        else if (i === 1) { ev.qtd_b = qtd; ev.simbolo_b = simbolo; }
+      });
+      fora.push(ev);
+    });
+    sombrasDaCadeia = fora;
+    livroAtual = null;          // o livro se refaz com os eventos novos
+    sombrasBuscando = false;
+    desenhar();
+  }).catch(function () {
+    sombrasBuscando = false; sombrasDaCadeia = []; semMexidasDaCadeia = true;
+    desenhar();
+  });
+}
+
 function pedirMexidas(f) {
   if (!f || !f.posicao || !carteiraSolana) return;
   if (daCadeia[f.chave]) return;
@@ -8600,7 +9119,10 @@ function secaoDaCaixa(cx, d, c) {
        a separacao e legal, pra eu saber em qual parte meu patrimonio esta
        negativo ou positivo". A mesma conta do resumo, fatiada por caixa. */
     (function () {
-      if (!serieDePrecos) { pedirSeriesDePrecos(); return ""; }
+      if (!serieDePrecos || sombrasDaCadeia == null) {
+        pedirSeriesDePrecos(); pedirSombrasDaCadeia(); return "";
+      }
+      if (!livroAtual) montarLivroAgora();
       var soma = 0, custoCx = 0, saiu = 0, achou = false, incompleta = false;
       d.linhas.forEach(function (l) {
         var r = lucroDaLinha(l);

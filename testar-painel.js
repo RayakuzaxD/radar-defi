@@ -532,6 +532,96 @@ titulo("Nome do servidor usado sem ser declarado no navegador");
   conferir("e a conferencia pega um nome solto de mentira", pegou);
 }
 
+/* ---------------------------------------------------------------------------
+ * QUEM PROMETE PREENCHER TEM QUE PREENCHER OU DESISTIR
+ *
+ * O defeito, com a frase dele: "é normal ficar muito tempo nessa tela? 🤔". A
+ * caixinha ficou presa em "medindo o rendimento…" e não saía mais.
+ *
+ * `pedirSombrasDaCadeia` tinha uma guarda que SAÍA SEM MARCAR NADA quando a
+ * carteira Solana não estava ligada. A variável ficava null pra sempre, e a
+ * tela esperava um aviso que nunca ia chegar. O erro é null significando duas
+ * coisas ao mesmo tempo — "ainda não pedi" e "não dá pra pedir" —, a mesma
+ * doença da receita 2.5 ("ausência só vale como prova quando a leitura ficou
+ * completa") vestida de outro jeito.
+ *
+ * A regra que fica: toda saída de uma função que enche um estado ou ENCHE o
+ * estado, ou é a saída de "já tem alguém cuidando disso". Saída muda é tela
+ * parada. E promessa que nunca resolve não chama o .catch() — por isso tem que
+ * existir um prazo pra desistir e seguir sem.
+ * ------------------------------------------------------------------------- */
+titulo("Quem promete preencher tem que preencher ou desistir");
+{
+  const todoOScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]).join(SEPARADOR);
+
+  /* Pega o corpo da função contando chaves. Regex não fecha bloco. */
+  const corpoDe = (fonte, nome) => {
+    const i = fonte.indexOf("function " + nome + "(");
+    if (i < 0) return null;
+    let n = 0;
+    for (let k = fonte.indexOf("{", i); k < fonte.length; k++) {
+      if (fonte[k] === "{") n++;
+      else if (fonte[k] === "}") { n--; if (n === 0) return fonte.slice(i, k + 1); }
+    }
+    return null;
+  };
+
+  const corpo = corpoDe(todoOScript, "pedirSombrasDaCadeia");
+  conferir("a função que busca as mexidas da cadeia existe", corpo !== null);
+
+  /* SÓ AS SAÍDAS DA PRÓPRIA FUNÇÃO, e isto não é detalhe.
+   *
+   * A primeira versão desta conferência contou também os `return` de dentro
+   * dos forEach que montam os movimentos — e acusou duas saídas boas. Quem
+   * prometeu preencher foi `pedirSombrasDaCadeia`; um `return` dentro de um
+   * forEach dela só pula um item da lista, não larga a tela esperando.
+   *
+   * Então: conta chaves, e só olha o que está no nível de cima. Sem isso o
+   * teste ficaria vermelho por um motivo falso — e teste que acusa coisa certa
+   * é teste que se aprende a ignorar. */
+  const saidasDeCima = (texto) => {
+    const limpo = texto
+      .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+      .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+    const linhas = limpo.split(SEPARADOR);
+    const achadas = [];
+    let nivel = 0;
+    for (let i = 0; i < linhas.length; i++) {
+      const antes = nivel;
+      for (const c of linhas[i]) { if (c === "{") nivel++; else if (c === "}") nivel--; }
+      if (antes !== 1) continue;                  // 1 = corpo da função
+      if (!/\breturn\s*;/.test(linhas[i])) continue;
+      /* A própria linha e as duas de cima: a marcação do estado vem na mesma
+         linha da saída, ou no if logo acima dela. */
+      const perto = linhas.slice(Math.max(0, i - 2), i + 1).join(" ");
+      const enche = /sombrasDaCadeia\s*=/.test(perto);
+      const jaCuidando = /sombrasBuscando/.test(perto);
+      if (!enche && !jaCuidando) achadas.push(i + 1);
+    }
+    return achadas;
+  };
+
+  if (corpo) {
+    const mudos = saidasDeCima(corpo);
+    conferir("nenhuma saída dela deixa a tela esperando pra sempre",
+      mudos.length === 0,
+      mudos.length ? "linha(s) " + mudos.join(", ") + " da função saem sem preencher nem marcar quem cuida" : "");
+
+    conferir("e existe um prazo pra desistir e desenhar mesmo sem",
+      /setTimeout/.test(corpo),
+      "sem prazo, uma resposta que nunca chega trava a caixinha de novo");
+
+    /* A prova de que a rede pega o peixe: uma saída muda de mentira tem que
+       ser acusada. Guarda nunca testada contra o caso ruim é fé, não guarda. */
+    const comOErro = corpo.replace("{", "{" + SEPARADOR + "if (nada) return;" + SEPARADOR);
+    conferir("e a conferência pega uma saída muda de mentira",
+      saidasDeCima(comOErro).length === 1);
+  }
+}
+
 console.log(SEPARADOR + "-".repeat(60));
 console.log(falhou === 0 ? `TUDO VERDE — ${passou} conferências` : `${falhou} FALHARAM (de ${passou + falhou})`);
 process.exit(falhou === 0 ? 0 : 1);

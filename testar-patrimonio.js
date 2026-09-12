@@ -469,17 +469,39 @@ titulo("FECHAR POOL NÃO É LUCRO — o caso que ele viu na tela");
   conferir("sem quantidade e símbolo no lançamento, o passado infla pra 200",
     perto(semSombra, 200), String(semSombra));
 
-  /* A sombra maior que o saldo de hoje (ele fechou a pool e depois trocou o
-     SOL) dá quantidade negativa, e quantidade negativa é história incompleta:
-     null, e a janela some da tela. Some, mas não mente. */
+  /* A SOMBRA MAIOR QUE O SALDO — o caso real que apagou a tela dele.
+   *
+   * Ele fechou a pool e pôs o dinheiro em OUTRA no mesmo minuto: a linha de SOL
+   * ficou com 0,016 e a sombra queria descontar 1,0266. A primeira versão
+   * devolvia null, e as QUATRO janelas sumiram de uma vez — com a mensagem
+   * errada ainda por cima ("sem preço de algum dia").
+   *
+   * Sombra que não cabe não é falta de informação: é dinheiro que saiu da linha
+   * por um caminho que os lançamentos não contam (pool → pool). Aplica o que
+   * cabe e segue. Apagar quatro janelas por causa disso é trocar um número
+   * quase certo por nenhum número. */
   const trocouDepois = valorNaData({
     linhas: [{ chave: "sol", token: "SOL", quantidade: 0.1 },
       { chave: "pool", posicao: "P1", valor_entrada: 100,
         data_entrada: "2026-09-09", fechada_em: "2026-09-11" }],
     movimentos: movs, precoEm, cambioEm,
   }, "2026-09-10");
-  conferir("sombra maior que o saldo vira null, e não um número torto",
-    trocouDepois === null, String(trocouDepois));
+  conferir("sombra que não cabe não apaga a janela",
+    trocouDepois != null, String(trocouDepois));
+  conferir("ela aplica só o que cabe: sobra a pool, e o SOL zera",
+    perto(trocouDepois, 100), String(trocouDepois));
+
+  /* Mas um LANÇAMENTO dele que dá negativo continua virando null: ali falta
+     informação de verdade, e inventar seria pior. A separação entre os dois é
+     o que faz esta regra não virar "engole tudo". */
+  const lancamentoImpossivel = valorNaData({
+    linhas: [{ chave: "sol", token: "SOL", quantidade: 0.1 }],
+    movimentos: [{ chave: "sol", tipo: "aporte", valor_usd: 500,
+      qtd_a: 5, simbolo_a: "SOL", quando: "2026-09-11" }],
+    precoEm, cambioEm,
+  }, "2026-09-10");
+  conferir("lançamento dele que não fecha continua virando null",
+    lancamentoImpossivel === null, String(lancamentoImpossivel));
 }
 
 /* ------------------------------------------------------------------------ */
@@ -559,7 +581,13 @@ titulo("A CÓPIA DO NAVEGADOR É LITERAL (receita 5.3)");
     .split("export ").join("")
     .split(CRASE).join("'");
 
-  const ini = painel.indexOf("NAO EDITE AQUI");
+  /* O MARCADOR TEM QUE SER ÚNICO, e este teste quase não notou.
+   *
+   * Quando a cópia do livro nasceu, os dois blocos passaram a conter "NAO
+   * EDITE AQUI" — e o porte substituiu o bloco errado, apagando o livro
+   * inteiro e deixando o cabeçalho dele em cima do conteúdo do patrimônio.
+   * Foi esta conferência que pegou, pelo tamanho. */
+  const ini = painel.indexOf("COPIA LITERAL DE src/patrimonio.js");
   const fim = painel.indexOf("FIM DA COPIA DE src/patrimonio.js");
   conferir("os marcadores da cópia existem no painel", ini > 0 && fim > ini);
   const dentro = painel.slice(painel.indexOf("*/", ini) + 2,

@@ -204,6 +204,52 @@ export function quantidadeNaData(qtdHoje, movimentos, precoEm, data) {
   return q < -1e-12 ? null : Math.max(0, q);
 }
 
+/* A SOMBRA SE APLICA SÓ ATÉ ONDE CABE — e isto apagou a tela dele.
+ *
+ * A sombra diz "estas moedas entraram na linha quando a pool devolveu". Mas ele
+ * fechou a pool e pôs o dinheiro em OUTRA pool no mesmo minuto: a linha de SOL
+ * ficou com 0,016 e a sombra queria descontar 1,0266. A reconstrução ia a
+ * negativo, virava null, e as quatro janelas sumiram de uma vez — "sem preço de
+ * algum dia" em todas, que nem era o motivo.
+ *
+ * A diferença entre os dois casos é real e vale a separação:
+ *
+ *   movimento LANÇADO que dá negativo   história incompleta → null, e a janela
+ *                                        some. É honesto: falta informação.
+ *   SOMBRA que dá negativo               o dinheiro saiu da linha DEPOIS, pra
+ *                                        outra pool. Não falta informação —
+ *                                        falta rastrear, e rastrear cadeia de
+ *                                        pool em pool é outro problema. Aplica
+ *                                        o que cabe e segue.
+ *
+ * Apagar quatro janelas por causa de um encadeamento de pool é trocar um número
+ * quase certo por nenhum número. */
+function aplicarSombras(q0, sombras, corte) {
+  let q = q0;
+  for (const m of sombras) {
+    const quando = soODia(m?.quando);
+    if (!quando || quando <= corte) continue;
+    const usd = mexeNaQuantidade(m);
+    if (!usd) continue;
+    const qm = Number(m?.qtd_a);
+    if (!Number.isFinite(qm) || qm <= 0) continue;
+    q -= (usd < 0 ? -qm : qm);
+  }
+  /* O CORTE É NO FIM, E NÃO A CADA PASSO — e a diferença apagou uma tela.
+   *
+   * A primeira versão cortava a cada sombra ("só até onde cabe"), e o
+   * resultado dependia da ORDEM: a sombra do fechamento zerava a linha de SOL,
+   * e a sombra do depósito que veio depois somava 1,03 em cima do zero. A
+   * linha aparecia com um SOL inteiro num dia em que ele tinha dois
+   * centésimos, e a soma das partes ficava US$ 80 longe do total.
+   *
+   * Com a cadeia contando todos os eventos, a conta fecha sozinha e não
+   * precisa de corte no meio. O corte final fica como rede: se ainda assim der
+   * negativo, é história incompleta, e zero erra menos que um número negativo
+   * de moedas. */
+  return Math.max(0, q);
+}
+
 /* O VALOR DA CARTEIRA INTEIRA NUMA DATA.
  *
  * Três tipos de linha, três tratamentos, e os três declaram o que não sabem:
@@ -219,7 +265,8 @@ export function quantidadeNaData(qtdHoje, movimentos, precoEm, data) {
  * um mês pra cima isso não toca em nada — nenhuma posição dele tem mais de
  * quatro dias — mas o dia em que tiver, o número vai ser conservador, e é o
  * lado certo pra errar. */
-export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
+export function valorNaData({ linhas, movimentos, precoEm, cambioEm, daCadeia,
+  detalhado = false }, data) {
   const corte = soODia(data);
   if (!corte || !Array.isArray(linhas)) return null;
 
@@ -250,9 +297,40 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
    * pra ler a cadeia em vez de estimar. */
   const chavesDePosicao = new Set(
     linhas.filter((l) => l?.posicao && l?.chave).map((l) => l.chave));
+
+  /* OS EVENTOS DA CADEIA ENTRAM AQUI, e eles são o que faz a conta fechar.
+   *
+   * O lançamento dele não existe para a maioria das mexidas: quem funda uma
+   * pool com USDC que já estava na carteira não lança nada — a linha míngua
+   * sozinha. Sem saber disso, a reconstrução mantinha o USDC no passado E
+   * contava a pool, ou o contrário, e a janela de 24 horas dele deu −US$ 201
+   * num dia em que nada disso aconteceu.
+   *
+   * A cadeia conta: cada depósito e cada retirada, com a quantidade e o
+   * símbolo de cada token. Daí saem sombras exatas, e o dinheiro para de
+   * aparecer e sumir entre as linhas.
+   *
+   * Eles NÃO viram fluxo: são remanejamento. Entram só como sombra. */
+  const paraSombra = (movimentos || []).filter(
+    (m) => chavesDePosicao.has(m?.chave) && (m.tipo === "aporte" || m.tipo === "saque"),
+  ).concat(daCadeia || []);
+
+  /* A POSIÇÃO QUE A CADEIA EXPLICA NÃO É DEVOLVIDA AO PASSADO.
+   *
+   * "Devolver ao passado" era uma aproximação pra uma pergunta que eu não
+   * sabia responder: de onde veio o dinheiro desta pool? Sem resposta, eu
+   * assumia que estava na carteira e somava o valor de entrada ao passado.
+   *
+   * Com o evento da cadeia eu SEI de onde veio: a sombra devolve as moedas à
+   * linha de token exata. Manter as duas coisas conta o mesmo dinheiro duas
+   * vezes — foi o que fez a janela de 24 horas dele sair de −201 pra −481
+   * quando liguei a cadeia. A aproximação existe pra quando falta o fato; com
+   * o fato, ela sai. */
+  const explicadasPelaCadeia = new Set(
+    (daCadeia || []).filter((m) => m?.chave && m.tipo === "aporte").map((m) => m.chave));
+
   const sombras = new Map();
-  for (const m of movimentos || []) {
-    if (!chavesDePosicao.has(m?.chave)) continue;
+  for (const m of paraSombra) {
     if (m.tipo !== "aporte" && m.tipo !== "saque") continue;
     for (const [qtd, simbolo] of [[m.qtd_a, m.simbolo_a], [m.qtd_b, m.simbolo_b]]) {
       const q = Number(qtd);
@@ -264,11 +342,32 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
         tipo: m.tipo === "saque" ? "aporte" : "saque",
         valor_usd: 1, // só o sinal importa: a quantidade manda
         qtd_a: q,
+        sombra: true,
       });
     }
   }
 
   let total = 0;
+  /* A DECOMPOSIÇÃO SAI DAQUI, e não de uma segunda função.
+   *
+   * O painel tinha uma cópia paralela desta conta pra responder "de onde veio
+   * o ganho de cada janela" — e foi a cópia que ficou pra trás em TODO
+   * conserto. A última vez mostrou as pools novas perdendo o valor inteiro
+   * num dia em que o total estava certo: o número de cima certo, o de baixo
+   * errado, os dois na mesma tela.
+   *
+   * Quem quer o detalhe pede o detalhe da MESMA passada. Duas leituras da
+   * mesma carteira não podem discordar se só existe uma leitura. */
+  const porLinha = [];
+  const anotar = (l, v) => {
+    porLinha.push({ chave: l?.chave || null, valor: v,
+      /* O token viaja junto: quem decompõe precisa saber de qual moeda a
+         linha é, pra achar o remanejo que passou por ela. */
+      token: l?.token || null,
+      nome: l?.fatia || l?.token || (l?.posicao ? "posição" : l?.moeda) || "linha" });
+    return v;
+  };
+
   for (const l of linhas) {
     const movs = porChave.get(l?.chave) || [];
 
@@ -279,7 +378,7 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
       if (!Number.isFinite(v)) return null;
 
       if (entrou && entrou <= corte) {
-        if (fechou && fechou <= corte) continue; // já não existia na data
+        if (fechou && fechou <= corte) { anotar(l, 0); continue; }
 
         /* A ENTRADA MAIS O QUE ELE MEXEU DEPOIS. Ele aumenta pools e tira
          * pedaços delas ("posso querer aumentar uma pool... posso retirar
@@ -293,7 +392,7 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
           if (!quando || quando <= entrou || quando > corte) continue;
           comMexidas += fluxoExterno(m);
         }
-        total += Math.max(0, comMexidas);
+        total += anotar(l, Math.max(0, comMexidas));
         continue;
         /* `fluxoExterno` e não `fluxoDoPatrimonio` aqui de propósito: a
            pergunta é quanto a POSIÇÃO valia, e pra ela o depósito entrou de
@@ -326,7 +425,7 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
        * carteira antes de hoje: a quantidade líquida de hoje já o contém, a
        * reconstrução que parte de hoje já o carrega pro passado, e devolver
        * a entrada de novo contaria o mesmo dinheiro duas vezes. */
-      if (!fechou) {
+      if (!fechou && !explicadasPelaCadeia.has(l.chave)) {
         let deFora = 0;
         for (const m of movs) {
           const quando = soODia(m?.quando);
@@ -334,19 +433,22 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
           const f = fluxoExterno(m);
           if (f > 0) deFora += f;
         }
-        total += Math.max(0, v - deFora);
+        total += anotar(l, Math.max(0, v - deFora));
+      } else {
+        anotar(l, 0);
       }
       continue;
     }
 
     if (l?.token != null && l?.quantidade != null) {
-      const comSombras = movs.concat(
-        sombras.get(String(l.token).toUpperCase()) || []);
-      const q = quantidadeNaData(l.quantidade, comSombras, (d) => precoEm(l.token, d), corte);
-      if (q == null) return null;
+      /* Os lançamentos DELE primeiro (e eles podem dizer "não sei", virando
+         null); as sombras depois, e elas nunca derrubam a janela. */
+      const q0 = quantidadeNaData(l.quantidade, movs, (d) => precoEm(l.token, d), corte);
+      if (q0 == null) return null;
+      const q = aplicarSombras(q0, sombras.get(String(l.token).toUpperCase()) || [], corte);
       const p = precoEm(l.token, corte);
       if (!(p > 0)) return null;
-      total += q * p;
+      total += anotar(l, q * p);
       continue;
     }
 
@@ -356,14 +458,14 @@ export function valorNaData({ linhas, movimentos, precoEm, cambioEm }, data) {
       if (l.moeda === "BRL") {
         const c = cambioEm(corte); // dólares por real
         if (!(c > 0)) return null;
-        total += v * c;
+        total += anotar(l, v * c);
       } else {
-        total += v;
+        total += anotar(l, v);
       }
       continue;
     }
   }
-  return total;
+  return detalhado ? { total, porLinha } : total;
 }
 
 /* O RENDIMENTO DE UM PERÍODO, com o aporte neutralizado.
@@ -454,3 +556,112 @@ export function lucroDesdeOComeco(valorHoje, movimentos) {
     pct: custo > 0 ? ((v - custo) / custo) * 100 : null,
   };
 }
+
+/* ---------------------------------------------------------------------------
+ * O GANHO SOMADO PEÇA A PEÇA — e por que este caminho é melhor que o outro
+ *
+ * A conta de cima reconstrói o PATRIMÔNIO INTEIRO em cada dia e compara. É
+ * exata quando dá certo, e ela exige uma coisa que o mundo real não entrega:
+ * saber onde cada dólar estava em cada dia. Um SOL que ele transferiu de uma
+ * corretora, um swap que virou outro token, uma pool que financiou outra — cada
+ * caminho não rastreado infla ou esvazia o passado, e o erro aparece como
+ * rendimento que não existiu.
+ *
+ * Eu tentei tapar isso três vezes (devolver a posição ao passado, sombras nas
+ * linhas de token, corte quando a sombra não cabia) e cada tapa consertava uma
+ * tela e quebrava outra. A última rodou com a carteira dele: as partes ficaram
+ * certas e o total foi pra +US$ 80 num dia de −US$ 21.
+ *
+ * ESTE CAMINHO NÃO PERGUNTA ONDE O DINHEIRO ESTAVA. Ele soma o que cada peça
+ * ganhou, e ganho de peça não depende de rastreamento:
+ *
+ *   linha de token   quantos ele tinha em cada dia, vezes o quanto o preço
+ *                    andou naquele dia. A quantidade sai dos lançamentos DELE
+ *                    (compras e vendas reais), que são a parte confiável.
+ *
+ *   posição          o que ela vale hoje menos o que entrou nela, limitado ao
+ *                    período. Pool que nasceu e morreu dentro da janela entrega
+ *                    o resultado inteiro; pool mais velha entrega a diferença.
+ *
+ * Remanejo some sozinho: o dinheiro que sai de uma linha e entra numa pool não
+ * é ganho em lugar nenhum, e não precisa ser descontado em lugar nenhum. É a
+ * regra dele — "lucro é rendimento de tokens ou taxa de pools" — virando a
+ * FORMA da conta, em vez de uma correção aplicada depois.
+ *
+ * E a soma das partes é o total POR CONSTRUÇÃO: não há um total calculado por
+ * outro caminho pra discordar dela. */
+export function ganhoPeloPreco(linha, movimentos, precoEm, dias) {
+  if (!linha?.token || linha.quantidade == null) return null;
+  let total = 0;
+  for (let i = 1; i < dias.length; i++) {
+    const ontem = dias[i - 1], hoje = dias[i];
+    /* A quantidade do dia anterior: é ela que atravessou a variação. Comprar
+       hoje não faz o preço de ontem render. */
+    const q = quantidadeNaData(linha.quantidade, movimentos, (d) => precoEm(linha.token, d), ontem);
+    if (q == null) return null;
+    const p0 = precoEm(linha.token, ontem), p1 = precoEm(linha.token, hoje);
+    if (!(p0 > 0) || !(p1 > 0)) return null;
+    total += q * (p1 - p0);
+  }
+  return total;
+}
+
+/* O ganho de uma linha de valor digitado (a reserva em real): só o câmbio. */
+export function ganhoPeloCambio(linha, cambioEm, dias) {
+  if (linha?.moeda !== "BRL" || linha?.valor == null) return null;
+  const v = Number(linha.valor);
+  if (!Number.isFinite(v)) return null;
+  const c0 = cambioEm(dias[0]), c1 = cambioEm(dias[dias.length - 1]);
+  if (!(c0 > 0) || !(c1 > 0)) return null;
+  return v * (c1 - c0);
+}
+
+/* O ganho de uma posição no período.
+ *
+ * `vivoHoje` é o valor que a cadeia diz agora; `eventos` são as mexidas dela
+ * (do livro, já classificadas). O que ela rendeu é o que vale hoje menos o que
+ * entrou, e o período recorta: mexida de antes do período já está no valor de
+ * abertura dele. */
+export function ganhoDaPosicao(linha, eventos, vivoHoje, de, ate) {
+  if (!linha?.posicao) return null;
+  const entrou = soODia(linha.data_entrada);
+  const fechou = soODia(linha.fechada_em);
+
+  /* Fora da janela: não existia ainda, ou já tinha fechado antes dela. */
+  if (entrou && entrou > ate) return 0;
+  if (fechou && fechou <= de) return 0;
+
+  const base = Number(linha.valor_entrada);
+  if (!Number.isFinite(base)) return null;
+
+  /* Quanto ela valia no começo da janela: a entrada mais as mexidas até lá.
+     Se ela nasceu dentro da janela, começou do zero. */
+  let noComeco = 0;
+  if (entrou && entrou <= de) {
+    noComeco = base;
+    for (const e of eventos || []) {
+      if (e.quando > de) continue;
+      if (e.especie === RENDIMENTO_NO_LIVRO) continue;
+      if (e.quando > entrou) noComeco += e.usd;
+    }
+  }
+
+  /* E no fim: o valor vivo, ou zero se fechou dentro da janela. */
+  const noFim = (fechou && fechou <= ate) ? 0
+    : (Number.isFinite(vivoHoje) ? vivoHoje : base);
+
+  /* O que entrou e saiu DELA no período — isso não é ganho dela. */
+  let mexidas = 0;
+  for (const e of eventos || []) {
+    if (e.quando <= de || e.quando > ate) continue;
+    if (e.especie === RENDIMENTO_NO_LIVRO) continue;
+    mexidas += e.usd;
+  }
+
+  return noFim - noComeco - mexidas;
+}
+
+/* O nome da espécie vem do livro; repetido aqui como texto pra este módulo não
+   depender dele — os dois viajam pro navegador e a ordem de carga não é
+   garantida. Se o livro mudar o nome, o teste de concordância avisa. */
+const RENDIMENTO_NO_LIVRO = "rendimento";
