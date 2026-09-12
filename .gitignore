@@ -8,3 +8,15 @@ node_modules/
 # Provas de posição real (bytes lidos da carteira de alguém).
 # Cada instalação pode gravar as suas; as de ninguém ficam no repositório.
 provas/
+
+# E "as de ninguém" precisavam de uma linha pra realmente ficar.
+#
+# A regra acima ignorava a pasta INTEIRA, então a prova do fluxo dos ETFs — que
+# é uma tabela pública do Farside, igual pra todo mundo, sem dono — nunca era
+# versionada. Quem clonasse o repositório tomava ENOENT no testar-etf.js e
+# ficava com uma suíte vermelha por um motivo que não é dele.
+#
+# Descoberto em 12/09/2026 clonando o próprio repositório do GitHub pra
+# conferir uma limpeza: a suíte que passa aqui não é a mesma que passa lá, e
+# só clonando se descobre isso.
+!provas/farside-fluxo.html
