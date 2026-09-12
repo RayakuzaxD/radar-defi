@@ -4105,8 +4105,25 @@ function lucroDaLinha(l) {
     var descoberta = Math.max(0, entrada - aportadoNaEntrada);
     /* O lucro da posicao e o vivo acima da base — o que ELA rendeu. A
        entrada em si ou veio de dentro (custo ja nas linhas de origem) ou e
-       capital novo sem lancamento (a parte descoberta, custo aqui). */
-    return { lucro: l.emUSD - base, semHistoria: descoberta, custo: base };
+       capital novo sem lancamento (a parte descoberta, custo aqui).
+     *
+     * E O VIVO INCLUI AS TAXAS QUE AINDA NAO FORAM RECOLHIDAS.
+     *
+     * O valor que a cadeia devolve para uma pool e SO A LIQUIDEZ: as taxas
+     * acumuladas vem num campo a parte, e pendenteDaLinha existe exatamente
+     * pra somar isso por fora — com a regra escrita de que emprestimo nao
+     * soma (la o juro ja esta no cambio) e pool soma.
+     *
+     * A linha de CADA pool ja chamava essa funcao. Esta conta, que e a soma
+     * da caixinha, nao chamava — e por isso as duas telas discordavam sobre a
+     * mesma pool. Ele pegou somando o print: as quatro pools somavam
+     * +US$ 8,12 e a caixinha dizia +US$ 5,49, que e exatamente 8,12 menos os
+     * US$ 2,64 de taxas acumuladas.
+     *
+     * Taxa nao recolhida e dinheiro dele: esta na pool, e sai junto se ele
+     * fechar. Deixar de fora subestimava o rendimento em quase um terco. */
+    var pendente = pendenteDaLinha(l) || 0;
+    return { lucro: l.emUSD + pendente - base, semHistoria: descoberta, custo: base };
   }
 
   if (l.f.token && l.f.quantidade != null) {

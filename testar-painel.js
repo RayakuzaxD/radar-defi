@@ -737,6 +737,76 @@ titulo("Nenhuma função do painel tem nome repetido");
     ondeDeclara.size > 150, ondeDeclara.size + " encontradas");
 }
 
+/* ---------------------------------------------------------------------------
+ * TAXA NÃO RECOLHIDA É DINHEIRO DELE, E AS DUAS TELAS TÊM QUE CONCORDAR
+ *
+ * Ele somou o print e perguntou: "os 5 dólares de rendimento lá em cima estão
+ * corretos?". Não estavam. As quatro pools somavam +US$ 8,12 e a caixinha
+ * dizia +US$ 5,49 — exatamente 8,12 menos os US$ 2,64 de taxas acumuladas.
+ *
+ * O valor que a cadeia devolve para uma pool é SÓ A LIQUIDEZ: as taxas
+ * acumuladas vêm num campo à parte. `pendenteDaLinha` existe exatamente pra
+ * somar isso por fora, e o comentário dela já dizia a regra inteira — pool
+ * soma, empréstimo não (lá o juro já está no câmbio).
+ *
+ * A linha de cada pool chamava. A soma da caixinha não. Uma função de regra
+ * que só metade dos chamadores usa não é regra: é uma sugestão.
+ *
+ * Taxa não recolhida sai junto se ele fechar a pool. Deixar de fora
+ * subestimava o rendimento dele em quase um terço.
+ * ------------------------------------------------------------------------- */
+titulo("Taxa não recolhida entra nas DUAS contas");
+{
+  const todoOScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]).join(SEPARADOR);
+
+  const corpoDe = (nome) => {
+    const i = todoOScript.indexOf("function " + nome + "(");
+    if (i < 0) return null;
+    let n = 0;
+    for (let k = todoOScript.indexOf("{", i); k < todoOScript.length; k++) {
+      if (todoOScript[k] === "{") n++;
+      else if (todoOScript[k] === "}") { n--; if (!n) return todoOScript.slice(i, k + 1); }
+    }
+    return null;
+  };
+
+  conferir("a regra do pendente mora numa função só",
+    !!corpoDe("pendenteDaLinha"),
+    "duas regras diferentes pro mesmo campo é como nasce erro silencioso");
+
+  /* QUEM CALCULA RESULTADO DE POSIÇÃO PERGUNTA O PENDENTE. As duas contas que
+     transformam uma posição em dinheiro na tela: a linha (resultadoDoDinheiro)
+     e a soma da caixinha (lucroDaLinha). */
+  for (const nome of ["lucroDaLinha", "resultadoDoDinheiro"]) {
+    const corpo = corpoDe(nome);
+    conferir(nome + " existe", !!corpo);
+    if (corpo) {
+      conferir(nome + " soma a taxa não recolhida",
+        /pendenteDaLinha\s*\(/.test(corpo),
+        "sem isso esta conta discorda da outra sobre a mesma pool");
+    }
+  }
+
+  /* E A PROVA COM OS NÚMEROS DELE: a aritmética que ele fez de cabeça olhando
+     a tela. Se um dia a soma voltar a ignorar as taxas, esta conta volta a
+     dar 5,49 — e aqui fica escrito que 5,49 é o número errado. */
+  const pools = [
+    { entrada: 100.26, vivo: 99.17, taxa: 0.93 },
+    { entrada: 162.92, vivo: 167.92, taxa: 0.39 },
+    { entrada: 99.50, vivo: 100.43, taxa: 0.61 },
+    { entrada: 197.72, vivo: 198.37, taxa: 0.71 },
+  ];
+  const comTaxa = pools.reduce((s, p) => s + (p.vivo + p.taxa - p.entrada), 0);
+  const semTaxa = pools.reduce((s, p) => s + (p.vivo - p.entrada), 0);
+  conferir("com as taxas, as pools dele rendem ~US$ 8,12",
+    Math.abs(comTaxa - 8.12) < 0.02, comTaxa.toFixed(2));
+  conferir("e sem elas dariam os ~US$ 5,49 que ele viu e estranhou",
+    Math.abs(semTaxa - 5.48) < 0.02, semTaxa.toFixed(2));
+  conferir("a diferença entre as duas é a soma das taxas acumuladas",
+    Math.abs((comTaxa - semTaxa) - 2.64) < 0.02);
+}
+
 console.log(SEPARADOR + "-".repeat(60));
 console.log(falhou === 0 ? `TUDO VERDE — ${passou} conferências` : `${falhou} FALHARAM (de ${passou + falhou})`);
 process.exit(falhou === 0 ? 0 : 1);
