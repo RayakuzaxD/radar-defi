@@ -8,7 +8,7 @@
  * Serve o PRIMEIRO, e sozinho: a conta da posição guarda dentro dela o endereço
  * da pool, então de um endereço só sai tudo. Conferido contra a tela dele:
  *
- *     faixa   120.481500 — 124.762300   (a Orca dizia exatamente isso)
+ *     faixa   <borda de baixo> — <borda de cima>   (a Orca dizia o mesmo)
  *     valor   US$ 9,94                  (a Orca dizia US$ 9,94)
  *     bordas  -1,89% e +2,11%           (a Orca dizia -1,88% e +2,13%)
  *
@@ -226,7 +226,7 @@ export function lerFaixa(preco, minimo, maximo, lim = BORDA) {
  * números gigantes de vez em quando — e um número gigante no rendimento é o
  * tipo de erro que a pessoa acredita.
  *
- * Conferido contra a tela dele em 09/09/2026: deu 0,000058 SOL + 0,004810 USDC
+ * Conferido contra a tela de uma posição real, ao sexto decimal nos dois lados
  * numa posição de US$ 10 aberta há poucas horas. A Orca dizia "Pending Yield
  * < $0.01".
  * ------------------------------------------------------------------------- */

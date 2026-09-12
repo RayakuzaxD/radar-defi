@@ -115,6 +115,7 @@ import {
 import { paraBase58 } from "./orca.js";
 import { VERSAO, NUMERO_DA_VERSAO, COFRE_DA_CASCA } from "./versao.js";
 import { paginaDoPainel } from "./painel.js";
+import { motivoSemSegredo } from "./segredo.js";
 import {
   ICONE_32, ICONE_64, ICONE_128, ICONE_192, ICONE_512, ICONE_RECORTAVEL,
 } from "./icones.js";
@@ -288,7 +289,7 @@ async function medirOCiclo(env, dia) {
             }));
           }
         } catch (e) {
-          reserva.falhas.push("fonte reserva: " + String(e?.message || e).slice(0, 60));
+          reserva.falhas.push("fonte reserva: " + motivoSemSegredo(e, 60));
         }
       }
 
@@ -330,7 +331,7 @@ async function medirOCiclo(env, dia) {
         cruzamento: lerCruzamento(precos),
       });
     } catch (e) {
-      indicadores = { falhas: ["a régua do curso não foi lida: " + String(e?.message || e).slice(0, 80)] };
+      indicadores = { falhas: ["a régua do curso não foi lida: " + motivoSemSegredo(e, 80)] };
     }
     /* A série vai guardada junto, reduzida a 90 pontos.
      *
@@ -1600,7 +1601,7 @@ async function lerPosicoesDaCadeia(pedidos, nos) {
         };
       }
     } catch (e) {
-      posicoes.__erro = "não consegui falar com a Solana agora: " + String(e?.message || e).slice(0, 90);
+      posicoes.__erro = "não consegui falar com a Solana agora: " + motivoSemSegredo(e, 90);
       return posicoes;
     }
 
@@ -1703,7 +1704,7 @@ async function vigiarPosicoes(env, { seco = false } = {}) {
     try {
       anotou = await anotarEstado(env, paraAnotar);
     } catch (e) {
-      erroAoAnotar = String(e?.message || e).slice(0, 160);
+      erroAoAnotar = motivoSemSegredo(e, 160);
     }
     await limparHistoricoVelho(env);
   }
@@ -1844,7 +1845,7 @@ async function vigiarTokens(env, { seco = false } = {}) {
     try {
       await anotarTokensVistos(env, novosVistos);
       await anotarLadosDeToken(env, novosLados);
-    } catch (e) { erroAoAnotar = String(e?.message || e).slice(0, 160); }
+    } catch (e) { erroAoAnotar = motivoSemSegredo(e, 160); }
   }
 
   return {
@@ -1937,7 +1938,7 @@ async function vigiarAlertas(env, precoAgora, { seco = false } = {}) {
   try {
     lista = await alertasPendentes(env);
   } catch (e) {
-    return { ...nada, motivo: String(e?.message || e).slice(0, 120) };
+    return { ...nada, motivo: motivoSemSegredo(e, 120) };
   }
 
   const pendentes = lista || [];
@@ -2061,7 +2062,7 @@ async function rodada(env, { soUrgente = false, semanal = false, seco = false, m
       const chat = await chatDoAviso(env).catch(() => null);
       if (chat) {
         await falar(env, "O vigia das posições não conseguiu olhar agora: " +
-          String(e?.message || e).slice(0, 140), chat).catch(() => {});
+          motivoSemSegredo(e, 140), chat).catch(() => {});
       }
     }
   }
@@ -2597,7 +2598,7 @@ export default {
           calou: !(v.avisos || []).length,
         }, { headers: { "cache-control": "no-store" } });
       } catch (e) {
-        return Response.json({ erro: String(e?.message || e) }, { status: 500 });
+        return Response.json({ erro: motivoSemSegredo(e) }, { status: 500 });
       }
     }
 
@@ -2880,7 +2881,8 @@ export default {
        * Em 12/09/2026 isso custou o numero mais errado da noite: uma pool com
        * quatro transacoes devolveu duas mexidas, e o painel, sem saber que
        * faltava metade, deixou a cadeia calar os lancamentos dele. A pool
-       * apareceu rendendo +US$ 19,02 em tres janelas ao mesmo tempo.
+       * apareceu rendendo, em tres janelas ao mesmo tempo, mais da metade
+       * do que ela chegou a ter dentro.
        *
        * Nao e o no que falhou que faz o estrago: e a resposta nao dizer que
        * ele falhou. */
@@ -2940,7 +2942,7 @@ export default {
         faltaram: lido.faltaram.length,
         /* AS POSICOES CUJA LEITURA FICOU PELA METADE, pelo endereco. Sem esta
            lista o painel nao tem como saber em quem confiar, e confiar numa
-           leitura pela metade foi o que criou os US$ 19,02 do nada. */
+           leitura pela metade foi o que criou o lucro do nada. */
         incompletas: lido.incompletas,
         /* E o extrato por posicao, pra quando alguem precisar entender por
            que uma delas entrou na lista de cima. */
@@ -3122,7 +3124,7 @@ export default {
            mexe em nada — que é o comportamento certo quando eu não sei. */
         return Response.json({
           saldos: {}, completo: false, falhou: ["tudo"],
-          erro: String(e?.message || e).slice(0, 120),
+          erro: motivoSemSegredo(e, 120),
         }, { headers: { "cache-control": "no-store" } });
       }
     }
@@ -3293,7 +3295,7 @@ export default {
         }
       } catch (e) {
         return Response.json(
-          { ...achado, erro: "não consegui falar com a Solana agora: " + String(e?.message || e).slice(0, 90) },
+          { ...achado, erro: "não consegui falar com a Solana agora: " + motivoSemSegredo(e, 90) },
           { headers: { "cache-control": "no-store" } },
         );
       }
@@ -3307,8 +3309,8 @@ export default {
      * a conta da posição guarda dentro dela o endereço da pool, e a pool guarda
      * os dois tokens. De um endereço só sai faixa, valor e onde o preço está.
      *
-     * Conferido contra a tela dele em 08/09/2026: faixa 120.481500–124.762300,
-     * valor US$ 9,94, bordas -1,89% e +2,11%. A Orca dizia o mesmo.
+     * Conferido contra a tela de uma posição real: faixa, valor e bordas
+     * batiam com o que a Orca mostrava, ao sexto decimal.
      *
      * Três idas à rede no total, em lote, independente de quantas posições —
      * o Worker corta em 50 subrequisições e uma carteira com dez posições não
@@ -3503,6 +3505,84 @@ export default {
      *
      * UMA CHAMADA SO. Queimar a cota pra medir a cota seria burro, e a primeira
      * versao desta rota fazia duas. */
+    /* A LUPA DO LEITOR DE MEXIDAS. Devolve uma transação da cadeia, crua e
+     * inteira, pelos nós do Worker.
+     *
+     * Existe porque em 12/09/2026 o leitor não entendeu duas transações de
+     * uma pool (um swap da Orca, que ele não sabia ler) e NENHUM nó público
+     * gratuito devolve o conteúdo de transação antiga — só o índice. O único
+     * nó que enxergava era o do Worker, e não havia janela pra olhar através
+     * dele. Sem ver a transação, não há como ensinar o leitor a lê-la.
+     *
+     * É dado público da blockchain: qualquer pessoa com um nó pago vê o
+     * mesmo. Não passa nada além do que a assinatura já aponta. */
+    if (url.pathname === "/saude/transacao") {
+      /* FECHADA COM O GATILHO, e não por zelo genérico.
+       *
+       * Ela é uma lupa de diagnóstico do dono, e aberta ela é um proxy grátis
+       * de getTransaction contra o nó PAGO. Assinatura que não existe percorre
+       * a fila inteira e gasta a chamada do mesmo jeito. Quem drenar a cota do
+       * nó não quebra o painel na cara: empurra as leituras de volta pros nós
+       * gratuitos podados — que é exatamente o modo de falha de 12/09/2026,
+       * leitura incompleta virando número errado.
+       *
+       * O GATILHO já existe no Worker e já guarda as rotas de manutenção. */
+      if (!env.GATILHO || url.searchParams.get("gatilho") !== env.GATILHO) {
+        return Response.json({ erro: "não" }, { status: 404 });
+      }
+      const assinatura = String(url.searchParams.get("assinatura") || "").trim();
+      if (!/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(assinatura)) {
+        return Response.json({ erro: "preciso de ?assinatura= (base58)" }, { status: 400 });
+      }
+      const nos = env.SOLANA_RPC ? [env.SOLANA_RPC, ...NOS] : NOS;
+
+      /* NÓ A NÓ, com o caminho contado. A primeira versão usava o pedir()
+       * inteiro e devolvia só o resultado final — quando veio null, não havia
+       * como saber se o nó principal estava podado, com limite estourado ou
+       * nem configurado. Diagnóstico que não diz por onde passou obriga a
+       * adivinhar, e adivinhar foi o que esta noite inteira ensinou a não
+       * fazer.
+       *
+       * NUNCA a URL do nó na resposta: a chave dele mora nela. Só a posição
+       * na fila. */
+      const caminho = [];
+      let achada = null;
+      for (let i = 0; i < nos.length && !achada; i++) {
+        try {
+          const t = await pedir("getTransaction", [assinatura, {
+            maxSupportedTransactionVersion: 0, encoding: "jsonParsed",
+          }], [nos[i]]);
+          if (t) { achada = t; caminho.push({ no: i + 1, disse: "aqui está" }); }
+          else caminho.push({ no: i + 1, disse: "não tenho" });
+        } catch (e) {
+          /* O ERRO SAI CLASSIFICADO, NUNCA COPIADO — e a razão é a chave.
+           *
+           * A primeira versão repassava String(e.message).slice(0, 60). Duas
+           * fontes de texto passam por ali e NENHUMA é minha: o runtime lança
+           * "Fetch API cannot load: <URL INTEIRA>" quando a URL não parseia, e
+           * a URL do nó principal carrega a chave dentro; e a mensagem de erro
+           * do próprio nó é texto escrito por ele, refletido sem filtro.
+           *
+           * Contado na revisão: o prefixo até "api-key=" tem 63 caracteres, e
+           * o corte em 60 parava TRÊS caracteres antes da chave. Ela
+           * sobrevivia por sorte de contagem, não por decisão — bastava um
+           * provedor de host mais curto, ou o runtime mudar a frase, pra ela
+           * aparecer numa resposta pública.
+           *
+           * Segredo protegido por aritmética de sorte não está protegido. */
+          const cru = motivoSemSegredo(e);
+          const classe = /parse|cannot load|invalid url/i.test(cru) ? "endereço do nó inválido"
+            : /429|rate|limit/i.test(cru) ? "limite do nó estourado"
+            : /401|403|forbid|unauthor|api.?key/i.test(cru) ? "o nó recusou a credencial"
+            : /respondeu \d+/.test(cru) ? "o nó respondeu com erro"
+            : "não consegui falar com o nó";
+          caminho.push({ no: i + 1, disse: "erro: " + classe });
+        }
+      }
+      return Response.json({ assinatura, caminho, transacao: achada },
+        { headers: { "cache-control": "no-store" } });
+    }
+
     if (url.pathname === "/saude/vdd") {
       let resposta;
       try {
@@ -3513,7 +3593,7 @@ export default {
           },
         });
         resposta = r.status + " · " + (await r.text()).slice(0, 130);
-      } catch (e) { resposta = "erro: " + String(e?.message || e).slice(0, 80); }
+      } catch (e) { resposta = "erro: " + motivoSemSegredo(e, 80); }
 
       const guardados = await lerAjuste(env, "indicadores_bons").catch(() => null);
       return Response.json({
@@ -3526,7 +3606,7 @@ export default {
     if (url.pathname === "/saude/etf") {
       const g = await env.BANCO.prepare(
         "SELECT dia, total FROM etf_fluxo ORDER BY dia DESC LIMIT 10").all().catch(() => null);
-      const agora = await fluxoDosEtfs().catch((e) => ({ erro: String(e?.message || e).slice(0, 90) }));
+      const agora = await fluxoDosEtfs().catch((e) => ({ erro: motivoSemSegredo(e, 90) }));
       /* `?dias=N` devolve a serie recente da FONTE, e nao do banco. Serve pra
          comparar as duas quando uma delas parecer errada — e foi assim que o
          banco foi semeado da primeira vez, antes da primeira rodada. */
@@ -3541,7 +3621,7 @@ export default {
 
     if (url.pathname === "/saude/tesouraria") {
       const agora = await tesourariasDeBitcoin(env.COINGECKO_KEY || null)
-        .catch((e) => ({ erro: String(e?.message || e).slice(0, 90) }));
+        .catch((e) => ({ erro: motivoSemSegredo(e, 90) }));
       const guardado = await env.BANCO.prepare(
         "SELECT dia, total_btc FROM tesouraria ORDER BY dia DESC LIMIT 8").all().catch(() => null);
       return Response.json({
@@ -3578,7 +3658,7 @@ export default {
           const t = (await r.text()).slice(0, 110);
           fora[nome] = { status: r.status, comeco: t.replace(/\s+/g, " ") };
         } catch (e) {
-          fora[nome] = { erro: String(e?.message || e).slice(0, 90) };
+          fora[nome] = { erro: motivoSemSegredo(e, 90) };
         }
       }
       return Response.json(fora, { headers: { "cache-control": "no-store" } });
@@ -3589,7 +3669,7 @@ export default {
         const m = await olharMacro(null, env.FRED_API_KEY || null);
         return Response.json(m, { headers: { "cache-control": "public, max-age=21600" } });
       } catch (e) {
-        return Response.json({ erro: String(e?.message || e).slice(0, 140), falhas: [] },
+        return Response.json({ erro: motivoSemSegredo(e, 140), falhas: [] },
                              { headers: { "cache-control": "no-store" } });
       }
     }
@@ -3636,7 +3716,7 @@ export default {
           })()),
         }, { headers: { "cache-control": "public, max-age=1800" } });
       } catch (e) {
-        return Response.json({ erro: String(e?.message || e).slice(0, 120) },
+        return Response.json({ erro: motivoSemSegredo(e, 120) },
                              { headers: { "cache-control": "no-store" } });
       }
     }
@@ -3649,7 +3729,7 @@ export default {
           headers: { "cache-control": "public, max-age=300" },
         });
       } catch (e) {
-        return Response.json({ erro: String(e?.message || e).slice(0, 120), pontos: [] },
+        return Response.json({ erro: motivoSemSegredo(e, 120), pontos: [] },
                              { headers: { "cache-control": "no-store" } });
       }
     }
@@ -3711,7 +3791,7 @@ export default {
           });
         }
       } catch (e) {
-        resposta.erro = String(e?.message || e).slice(0, 200);
+        resposta.erro = motivoSemSegredo(e, 200);
       }
       return Response.json(resposta, { headers: { "cache-control": "no-store" } });
     }
@@ -3770,7 +3850,7 @@ export default {
         fora.semSubstituto = r.falhas;
         if (r.somas) fora.desvioSobre = r.somas.n + " dias, ate " + r.somas.ate;
       } catch (e) {
-        fora.erro = String(e?.message || e).slice(0, 160);
+        fora.erro = motivoSemSegredo(e, 160);
       }
       fora.aviso = "esta rota OLHA e NAO GRAVA, e nao toca a fonte principal (cota de 10/hora)";
       return Response.json(fora, { headers: { "cache-control": "no-store" } });
@@ -3806,7 +3886,7 @@ export default {
           aviso: "esta rota MEDE e NÃO GRAVA — a tela mostra a medida da rodada, com a data dela",
         }, { headers: { "cache-control": "no-store" } });
       } catch (e) {
-        return Response.json({ erro: String(e?.message || e).slice(0, 200) },
+        return Response.json({ erro: motivoSemSegredo(e, 200) },
                              { headers: { "cache-control": "no-store" } });
       }
     }
@@ -3864,7 +3944,7 @@ export default {
           if (t.erroAoAnotar) resposta.tokens.erro = t.erroAoAnotar;
           if (t.pulou) resposta.tokens.motivo = t.pulou;
         } catch (e) {
-          resposta.tokens = { erro: String(e?.message || e).slice(0, 140) };
+          resposta.tokens = { erro: motivoSemSegredo(e, 140) };
         }
         resposta.olhou = v.olhou ?? 0;
         resposta.anotou = v.anotou ?? 0;
@@ -3874,7 +3954,7 @@ export default {
         if (v.erroAoAnotar) resposta.erroAoAnotar = v.erroAoAnotar;
         if (v.pulou) resposta.motivo = v.pulou;
       } catch (e) {
-        resposta.erro = String(e?.message || e).slice(0, 200);
+        resposta.erro = motivoSemSegredo(e, 200);
       }
       return Response.json(resposta, { headers: { "cache-control": "no-store" } });
     }

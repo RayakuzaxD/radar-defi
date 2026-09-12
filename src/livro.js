@@ -132,11 +132,11 @@ export function montarLivro({ linhas, movimentos, daCadeia } = {}) {
    * medir só o pedaço que sobrou.
    *
    * O caso que pegou, com os números dele (12/09/2026). Uma pool SOL/USDC
-   * fechada, onde ele lançou TRÊS aportes (9,92 + 9,38 + 9,51 = 28,81) e um
-   * saque de 28,86 — ganho de cinco centavos. A leitura da cadeia trouxe só
-   * DUAS transações: um depósito de 9,94 e o fechamento de 28,96. Os três
-   * lançamentos dele calaram, e a pool passou a aparecer rendendo
-   * +US$ 19,02 — quase o dobro do que ela chegou a ter dentro.
+   * fechada, com TRÊS aportes lançados à mão e um saque de valor quase igual
+   * — ganho de alguns centavos. A leitura da cadeia trouxe só DUAS
+   * transações: UM dos depósitos e o fechamento. Os três lançamentos
+   * calaram, e a pool passou a aparecer rendendo mais da metade do que ela
+   * chegou a ter dentro.
    *
    * O número apareceu em três janelas ao mesmo tempo e ele viu na tela.
    *

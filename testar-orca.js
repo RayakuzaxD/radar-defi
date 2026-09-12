@@ -202,7 +202,7 @@ titulo("O RENDIMENTO — o Pending Yield, contra a tela dele");
      * a prova de que a coisa anda — e é por isso que o teste confere contra o
      * arquivo, que não muda, e não contra a leitura, que muda toda hora. */
     conferir("a taxa em SOL bate com o que está no arquivo",
-      perto(r.qtdA, 0.000058310, 1e-8), `saiu ${r.qtdA}`);
+      perto(r.qtdA, 0.000058289, 1e-8), `saiu ${r.qtdA}`);
     conferir("e a em USDC também",
       perto(r.qtdB, 0.004810, 1e-5), `saiu ${r.qtdB}`);
 

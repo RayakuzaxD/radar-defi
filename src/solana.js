@@ -383,6 +383,7 @@ function deBase64(texto) {
    de identificacao e a queda pro proximo quando um recusa. */
 export async function pedir(metodo, params, nos = NOS) {
   let ultimoErro = null;
+  let algumDisseNada = false;
   for (const no of nos) {
     try {
       const r = await fetch(no, {
@@ -397,11 +398,29 @@ export async function pedir(metodo, params, nos = NOS) {
       if (!r.ok) { ultimoErro = new Error("o nó respondeu " + r.status); continue; }
       const d = await r.json();
       if (d?.error) { ultimoErro = new Error(d.error?.message || "pedido recusado"); continue; }
-      return d?.result;
+
+      /* "NADA" DE UM NÓ NÃO É "NADA" — é "eu não tenho".
+       *
+       * Nó público gratuito PODA o histórico: transação antiga devolve
+       * `result: null` com HTTP 200, sem erro nenhum. A versão antiga desta
+       * função aceitava esse nada como resposta e nem tentava o próximo nó da
+       * fila. Bastava o nó principal engasgar uma vez (limite de chamadas) pra
+       * o socorro cair num nó podado, receber null e entregar null — e aí a
+       * MESMA pergunta dava resposta diferente a cada hora. Foi medido em
+       * 12/09/2026: quatro transações que o nó principal enxergava vieram
+       * todas null pelo caminho do socorro.
+       *
+       * É a receita 2.5 dentro do mensageiro: ausência só vale como prova
+       * quando a leitura ficou completa. "Não tenho" manda a pergunta pro
+       * próximo nó; só quando TODOS dizem nada é que nada vira a resposta —
+       * porque aí a explicação restante é a transação não existir. */
+      if (d?.result === null || d?.result === undefined) { algumDisseNada = true; continue; }
+      return d.result;
     } catch (e) {
       ultimoErro = e;
     }
   }
+  if (algumDisseNada) return null;
   throw ultimoErro || new Error("nenhum nó da Solana respondeu");
 }
 

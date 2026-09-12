@@ -8,9 +8,10 @@
  * é boa pra PERGUNTAR, e era o que existia. Ela não serve pra REGISTRAR, e a
  * prova disso custou US$ 105 de prejuízo inventado:
  *
- *   ele desmontou uma pool SOL/ETH e a tela disse que ele perdeu 105 dólares.
- *   O saque fora lançado como US$ 0,04 — que eram 0,042342 ETH, porque o valor
- *   de uma posição sai na moeda B quando falta cotação de um dos lados.
+ *   uma pool SOL/ETH foi desmontada e a tela anunciou uma perda de três
+ *   dígitos. O saque fora lançado com o valor em ETH no campo de dólar,
+ *   porque o valor de uma posição sai na moeda B quando falta cotação de um
+ *   dos lados — dois zeros e vírgula onde devia haver uma centena.
  *
  * Consertei o portão da unidade. Aí ele recusou também a MINHA correção:
  *
@@ -28,9 +29,9 @@
  * ---------------------------------------------------------------------------
  * OS COFRES, NÃO A CARTEIRA (receita 1.6) — e eu errei isso outra vez
  *
- * A primeira versão deste arquivo somava a variação de saldo da CARTEIRA dele.
- * Dava 0,001850696 SOL onde a pool devolveu 0,001854239, e 1,036139696 onde ela
- * devolveu 1,026659469. A razão é a mesma de 2026-09: o saldo da carteira
+ * A primeira versão deste arquivo somava a variação de saldo da CARTEIRA dele,
+ * e errava na sexta e na terceira casa decimal conforme o caso — sempre pra
+ * mais, sempre pouco. A razão é a mesma de 2026-09: o saldo da carteira
  * carrega ALUGUEL DE CONTA e taxa de rede junto, e o fechamento devolve o
  * aluguel de três contas de uma vez.
  *
@@ -75,14 +76,94 @@ export function taxaDaTransacao(tx) {
 /* O NOME DA MEXIDA, pela instrução que a Orca registrou.
  *
  * Sai do log e não da forma do saldo: "o saldo aumentou" não distingue taxa
- * recolhida de liquidez retirada, e a conta trata as duas de jeitos opostos. */
+ * recolhida de liquidez retirada, e a conta trata as duas de jeitos opostos.
+ *
+ * MAS O LOG PODE CALAR — e calou. Em 12/09/2026 dois aportes reais dele
+ * passaram sem NENHUMA linha "Instruction:" no log: o programa da Orca rodou,
+ * moveu o dinheiro e não se apresentou. Por isso esta função não é mais a
+ * única voz: quando ela devolve null, `lerMexida` ainda tenta classificar
+ * pela DIREÇÃO do dinheiro (veja lá). Nome é etiqueta; direção sempre existe. */
 export function tipoDaMexida(instrucoes) {
   const tem = (re) => (instrucoes || []).some((i) => re.test(String(i)));
+
+  /* A LIQUIDEZ VEM ANTES DA COLHEITA, e a ordem aqui é a diferença entre um
+   * saque e um lucro inventado.
+   *
+   * A versão antiga testava CollectFees primeiro. Numa transação que carrega
+   * as DUAS coisas — e a própria Orca emite assim: sacar liquidez costuma vir
+   * com as taxas no mesmo pacote — o evento inteiro virava "colheita". Os
+   * deltas dos cofres vêm fundidos (não dá pra separar principal de taxa pelo
+   * saldo), então o principal sacado inteiro seria lançado como LUCRO
+   * REALIZADO, com o saque em zero.
+   *
+   * É a mesma mentira do lucro fabricado por outra porta: dinheiro que só mudou
+   * de lugar contado como rendimento. No histórico dele os dois vieram
+   * separados por 39 segundos (receita 6.20) — sorte, não garantia.
+   *
+   * Com a liquidez ganhando, o evento fundido vira saque pelo valor inteiro:
+   * a taxa embutida deixa de ser contada como lucro e vira parte do principal
+   * devolvido. Isso SUBESTIMA o rendimento em alguns dólares, e subestimar é
+   * o lado certo de errar — a conta nunca fabrica verde.
+   *
+   * Quem precisa saber que houve fusão pergunta a `taxaEmbutida` na mexida. */
   if (tem(/ClosePosition/i)) return "fechamento";
-  if (tem(/CollectFees|CollectReward/i)) return "colheita";
   if (tem(/DecreaseLiquidity/i)) return "retirada";
   if (tem(/IncreaseLiquidity|OpenPosition/i)) return "deposito";
+  if (tem(/CollectFees|CollectReward/i)) return "colheita";
   return null;
+}
+
+/* A transação mexeu na liquidez E colheu taxa no mesmo pacote?
+ *
+ * Quando isso acontece, os saldos dos cofres vêm somados e não há como
+ * separar principal de taxa por eles. A mexida sai com o tipo da liquidez e
+ * esta marca ligada, pra quem lê saber que o valor tem taxa dentro. */
+export function taxaVemEmbutida(instrucoes) {
+  const tem = (re) => (instrucoes || []).some((i) => re.test(String(i)));
+  return tem(/CollectFees|CollectReward/i) &&
+    tem(/ClosePosition|DecreaseLiquidity|IncreaseLiquidity|OpenPosition/i);
+}
+
+/* O programa das pools concentradas da Orca. Endereço público e fixo — é por
+ * ele que se reconhece "esta instrução é da pool" numa transação que também
+ * carrega outras coisas (um swap por outras pools, por exemplo). */
+export const PROGRAMA_WHIRLPOOL = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
+
+/* AS CONTAS DA INSTRUÇÃO QUE TOCA A POSIÇÃO — o filtro que separa a pool dele
+ * do resto da transação.
+ *
+ * O caso que ensinou (12/09/2026): ele aumentou uma pool pondo USDC, e a Orca
+ * embutiu a TROCA no mesmo pacote — a transação atravessa outras pools no
+ * caminho. O leitor de cofres via "conta que não é dele" e somava TUDO: os
+ * cofres das pools alheias do swap entravam na conta, e o aporte saía com
+ * números de mentira — na medição que pegou isto, um aporte saiu com o
+ * sinal trocado num dos lados e quase o dobro no outro.
+ *
+ * A âncora é a instrução: toda mexida na posição passa por UMA instrução do
+ * programa Whirlpool que lista a posição nas contas dela — e lista também os
+ * cofres CERTOS. O que essa instrução não lista não é da pool dele.
+ *
+ * Aceita a transação crua da cadeia (message.instructions + innerInstructions)
+ * ou o objeto reduzido que mexidasDaPosicao monta (instrucoesComContas).
+ * Devolve um Set com as contas, ou null quando nenhuma instrução do Whirlpool
+ * toca a posição — e null aqui significa "sem filtro", não "sem mexida": uma
+ * pool de outro protocolo (a Kamino, por exemplo) cai no caminho de sempre. */
+export function contasDaInstrucaoDaPosicao(tx, posicao) {
+  if (!tx || !posicao) return null;
+  const todas = tx.instrucoesComContas || [
+    ...(tx.transaction?.message?.instructions || []),
+    ...((tx.meta?.innerInstructions || []).flatMap((x) => x?.instructions || [])),
+  ];
+  const contas = new Set();
+  let achou = false;
+  for (const ins of todas) {
+    if (ins?.programId !== PROGRAMA_WHIRLPOOL) continue;
+    const cs = ins?.accounts || [];
+    if (!cs.includes(posicao)) continue;
+    achou = true;
+    for (const c of cs) contas.add(c);
+  }
+  return achou ? contas : null;
 }
 
 /* QUANTO DE CADA TOKEN A POSIÇÃO DEVOLVEU OU RECEBEU, nesta transação.
@@ -94,13 +175,18 @@ export function tipoDaMexida(instrucoes) {
  * invertido do ponto de vista do cofre: cofre perdendo = ele recebendo.
  *
  * Positivo = voltou pra ele. Devolve um mapa mint -> quantidade. */
-export function tokensQueSeMexeram(tx, dono) {
+export function tokensQueSeMexeram(tx, dono, soEstasContas = null) {
   if (!tx || !dono) return null;
   const meta = tx.meta || tx;
   const antes = new Map(), depois = new Map();
   for (const b of meta.preTokenBalances || []) antes.set(b.accountIndex, b);
   for (const b of meta.postTokenBalances || []) depois.set(b.accountIndex, b);
   if (!antes.size && !depois.size) return null;
+
+  /* O endereço de cada conta, pelo índice — é o que o filtro compara. Vem da
+     transação crua (accountKeys) ou do objeto reduzido (contas). */
+  const chaves = tx.contas
+    || (tx.transaction?.message?.accountKeys || []).map((k) => k?.pubkey || k);
 
   /* O DONO PRECISA APARECER NA TRANSAÇÃO — e esta guarda nasceu de um susto.
    *
@@ -125,6 +211,13 @@ export function tokensQueSeMexeram(tx, dono) {
     /* Só as contas que NÃO são dele: essas são os cofres do protocolo. */
     if (String(ref.owner) === String(dono)) continue;
 
+    /* E, quando há filtro, só os cofres DA INSTRUÇÃO DA POSIÇÃO. Sem isso,
+       uma transação que também carrega um swap soma os cofres das pools
+       alheias por onde a troca passou — medido em 12/09/2026: o aporte de
+       o aporte saía com um dos tokens de sinal trocado e o outro inflado
+       pelos cofres das pools alheias por onde a troca passou. */
+    if (soEstasContas && !soEstasContas.has(chaves[i])) continue;
+
     /* Token sem casa decimal é NFT, e o NFT da posição sendo queimado apareceu
        no mapa da primeira versão como se fosse dinheiro. Não é: é o recibo. */
     const casas = Number(ref.uiTokenAmount?.decimals);
@@ -144,18 +237,45 @@ export function tokensQueSeMexeram(tx, dono) {
   return fora;
 }
 
-/* Uma transação vira um evento legível: o que é, quando, e o que se mexeu. */
-export function lerMexida(tx, dono) {
-  const tipo = tipoDaMexida(tx?.instrucoes
+/* Uma transação vira um evento legível: o que é, quando, e o que se mexeu.
+ *
+ * `posicao` é opcional e destrava duas coisas que uma pool real dele exigiu:
+ *
+ *   1. O FILTRO: os tokens são medidos só nos cofres da instrução que toca a
+ *      posição, e o swap que viaja na mesma transação fica de fora.
+ *   2. A DIREÇÃO COMO VOZ DE RESERVA: quando o log não nomeia a instrução
+ *      (aconteceu — o programa rodou calado), o dinheiro saindo TODO dele
+ *      para a pool só pode ser depósito. Colheita e retirada não tiram nada
+ *      do dono, então não há com o que confundir.
+ *
+ *      O contrário não vale: dinheiro voltando sem nome pode ser retirada OU
+ *      colheita, e as contas tratam as duas de jeitos opostos (receita 3.4).
+ *      Sem nome e voltando, continua null — e a leitura se declara cega em
+ *      vez de chutar. */
+export function lerMexida(tx, dono, posicao = null) {
+  const filtro = contasDaInstrucaoDaPosicao(tx, posicao);
+  const tokens = tokensQueSeMexeram(tx, dono, filtro);
+  if (!tokens) return null;
+
+  const instrucoes = tx?.instrucoes
     || (tx?.meta?.logMessages || [])
       .filter((l) => /Instruction: /.test(l))
-      .map((l) => String(l).split("Instruction: ")[1]));
+      .map((l) => String(l).split("Instruction: ")[1]);
+
+  let tipo = tipoDaMexida(instrucoes);
+
+  if (!tipo && filtro) {
+    const qtds = Object.values(tokens);
+    if (qtds.length && qtds.every((v) => v < 0)) tipo = "deposito";
+  }
   if (!tipo) return null;
-  const tokens = tokensQueSeMexeram(tx, dono);
-  if (!tokens) return null;
+
   const quando = Number(tx.blockTime);
   return {
     tipo, tokens,
+    /* A taxa veio dentro deste mesmo valor? Então o valor é principal + taxa
+       somados, e o rendimento sai subestimado — nunca inflado. */
+    taxaEmbutida: taxaVemEmbutida(instrucoes),
     quando: Number.isFinite(quando) ? quando : null,
     assinatura: tx.assinatura || tx.transaction?.signatures?.[0] || null,
   };
@@ -238,7 +358,15 @@ export async function mexidasDaPosicao(posicao, dono, pedir, { quantas = 12 } = 
       instrucoes: (t.meta?.logMessages || [])
         .filter((l) => /Instruction: /.test(l))
         .map((l) => String(l).split("Instruction: ")[1]),
-    }, dono);
+      /* AS INSTRUÇÕES COM AS CONTAS DELAS — de cima e as de dentro. É por
+         elas que o leitor acha a instrução da posição e filtra os cofres
+         certos; os logs, que era tudo que viajava antes, PODEM CALAR (duas
+         transações reais dele rodaram sem uma linha "Instruction:"). */
+      instrucoesComContas: [
+        ...(t.transaction?.message?.instructions || []),
+        ...((t.meta?.innerInstructions || []).flatMap((x) => x?.instructions || [])),
+      ].map((ins) => ({ programId: ins?.programId, accounts: ins?.accounts || [] })),
+    }, dono, posicao);
     if (m) fora.push(m);
     else {
       /* GUARDA O PORQUE, nao so o fato. "Nao entendi duas" nao diz nada; "nao
@@ -274,8 +402,8 @@ export async function mexidasDaPosicao(posicao, dono, pedir, { quantas = 12 } = 
    * As duas últimas são ausência, e ausência vira mentira quando passa por
    * prova. Foi o que aconteceu em 12/09/2026: uma pool com QUATRO transações
    * devolveu duas mexidas, e quem lê achou que eram todas. A conta comparou
-   * "entrou 9,94" (um dos três depósitos) com "saiu 28,96" (o valor certo) e
-   * anunciou +US$ 19,02 de lucro numa pool que teve 28,81 dentro por um dia.
+   * o valor de UM depósito (dos três que houve) com o valor certo da saída,
+   * e anunciou como lucro mais da metade do que a pool teve dentro, num dia.
    *
    * Quem decide o que fazer com isso é quem chama. O trabalho daqui é NÃO
    * ESCONDER. */
