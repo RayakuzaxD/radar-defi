@@ -146,7 +146,7 @@ titulo("Toda função chamada existe de verdade");
     "parseInt", "parseFloat", "encodeURIComponent", "decodeURIComponent",
     "atob", "btoa", "alert", "confirm", "addEventListener", "requestAnimationFrame",
     "Request", "Response", "Headers", "URL", "URLSearchParams", "Intl", "TextEncoder",
-    "Uint8Array", "Uint32Array",
+    "Uint8Array", "Uint32Array", "AbortController",
     // Palavras do próprio JavaScript, que a varredura confunde com chamada.
     "if", "for", "while", "switch", "catch", "return", "typeof", "function",
     "in", "of", "async", "await", "new", "delete", "void", "do", "else",

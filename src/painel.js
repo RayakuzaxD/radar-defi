@@ -10653,7 +10653,38 @@ const COFRE = "radar:ultimo";
 const guardar = (d) => { try { localStorage.setItem(COFRE, JSON.stringify({ quando: Date.now(), d })); } catch {} };
 const desencavar = () => { try { return JSON.parse(localStorage.getItem(COFRE) || "null"); } catch { return null; } };
 
-fetch("/api/radar").then((r) => r.json()).then((d) => {
+/* UM PRAZO PRA BUSCA DO RADAR — e ele nasceu de um print dele.
+ *
+ * A tela ficou em "carregando…" e ele mandou a foto. Não era a página
+ * quebrada: era /api/radar demorando. Medido no mesmo dia, a rota respondeu
+ * 500 depois de CINQUENTA E TRÊS SEGUNDOS — ela baixa os 8,8 MB de protocolos
+ * do DefiLlama a cada abertura, e quando a fonte tosse, a espera é essa.
+ *
+ * O tratamento de erro abaixo já sabia o que fazer: mostrar a leitura guardada, ou dizer
+ * o que houve. Ele só nunca era chamado, porque a promessa continuava
+ * pendente — e enquanto ela pende, a tela não tem o que dizer além de
+ * "carregando…".
+ *
+ * É o mesmo defeito da caixinha do rendimento, um andar acima: quem espera
+ * sem prazo espera pra sempre. Quinze segundos é folgado (a rota leva 3 a 4
+ * quando está bem) e é menos que o tempo de alguém decidir que o app travou.
+ *
+ * Passado o prazo, o pedido é abortado e cai no catch — que mostra a última
+ * leitura com a data dela. Dado velho ANUNCIADO é muito melhor que tela
+ * parada, e incomparavelmente melhor que dado velho disfarçado. */
+var corteDoRadar = null;
+try { corteDoRadar = new AbortController(); } catch (e) { corteDoRadar = null; }
+if (corteDoRadar) setTimeout(function () { try { corteDoRadar.abort(); } catch (e) {} }, 15000);
+
+fetch("/api/radar", corteDoRadar ? { signal: corteDoRadar.signal } : undefined)
+  .then((r) => {
+    /* HTTP 500 NÃO REJEITA SOZINHO. O fetch só rejeita quando a rede falha;
+       um erro do servidor chega como resposta normal, e r.json() morreria
+       tentando ler "error code: 1101" como JSON — com uma mensagem sobre
+       sintaxe, que não diz nada sobre o que houve. */
+    if (!r.ok) throw new Error("o servidor respondeu " + r.status);
+    return r.json();
+  }).then((d) => {
   dados = d; guardar(d);
   const t = d.totais || {};
   /* O TOPO NAO CONTA ESTOQUE.
