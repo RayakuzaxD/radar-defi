@@ -567,8 +567,19 @@ titulo("Quem promete preencher tem que preencher ou desistir");
     return null;
   };
 
-  const corpo = corpoDe(todoOScript, "pedirSombrasDaCadeia");
-  conferir("a função que busca as mexidas da cadeia existe", corpo !== null);
+  /* AS DUAS, e foi cobrir só uma que deixou o defeito voltar.
+   *
+   * Em 11/09/2026 eu consertei a pedirSombrasDaCadeia e escrevi esta regra —
+   * mas apontei a rede só pra ela. A pedirSeriesDePrecos, que é a irmã e tinha
+   * exatamente as mesmas três saídas mudas, ficou de fora. No dia seguinte a
+   * tela dele continuava presa, e o teste continuava verde.
+   *
+   * Regra que vale pra uma função e é conferida só nela não é regra: é um
+   * conserto com nome pomposo. Quem promete preencher são as duas. */
+  const QUEM_ENCHE = [
+    { nome: "pedirSombrasDaCadeia", estado: "sombrasDaCadeia", marca: "sombrasBuscando" },
+    { nome: "pedirSeriesDePrecos", estado: "serieDePrecos", marca: "serieBuscando" },
+  ];
 
   /* SÓ AS SAÍDAS DA PRÓPRIA FUNÇÃO, e isto não é detalhe.
    *
@@ -580,7 +591,7 @@ titulo("Quem promete preencher tem que preencher ou desistir");
    * Então: conta chaves, e só olha o que está no nível de cima. Sem isso o
    * teste ficaria vermelho por um motivo falso — e teste que acusa coisa certa
    * é teste que se aprende a ignorar. */
-  const saidasDeCima = (texto) => {
+  const saidasDeCima = (texto, q) => {
     const limpo = texto
       .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
       .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
@@ -597,29 +608,133 @@ titulo("Quem promete preencher tem que preencher ou desistir");
       /* A própria linha e as duas de cima: a marcação do estado vem na mesma
          linha da saída, ou no if logo acima dela. */
       const perto = linhas.slice(Math.max(0, i - 2), i + 1).join(" ");
-      const enche = /sombrasDaCadeia\s*=/.test(perto);
-      const jaCuidando = /sombrasBuscando/.test(perto);
-      if (!enche && !jaCuidando) achadas.push(i + 1);
+      const enche = new RegExp(q.estado + "\\s*=").test(perto);
+      const jaCuidando = new RegExp(q.marca).test(perto);
+      /* A TERCEIRA SAÍDA LEGÍTIMA, e ela precisa ser declarada por escrito:
+         esperar um carregamento que, ao terminar, chama desenhar() de novo.
+         Vale porque aquele caminho redesenha no acerto E no erro — conferi. É
+         a única exceção, e ela é nominal de propósito: exceção que se escreve
+         sozinha vira porta. */
+      const esperandoOutro = /!movsCarregados/.test(perto);
+      if (!enche && !jaCuidando && !esperandoOutro) achadas.push(i + 1);
     }
     return achadas;
   };
 
-  if (corpo) {
-    const mudos = saidasDeCima(corpo);
-    conferir("nenhuma saída dela deixa a tela esperando pra sempre",
-      mudos.length === 0,
-      mudos.length ? "linha(s) " + mudos.join(", ") + " da função saem sem preencher nem marcar quem cuida" : "");
+  /* O CORPO DE CADA UMA, e todas têm que existir. Se alguém renomear uma
+     delas, o teste some junto sem reclamar — e teste que some calado é o
+     mesmo beco sem saída, um andar acima. */
+  QUEM_ENCHE.forEach((q) => {
+    const corpo = corpoDe(todoOScript, q.nome);
+    conferir("a função " + q.nome + " existe", corpo !== null);
+    if (!corpo) return;
 
-    conferir("e existe um prazo pra desistir e desenhar mesmo sem",
+    const mudos = saidasDeCima(corpo, q);
+    conferir(q.nome + ": nenhuma saída deixa a tela esperando pra sempre",
+      mudos.length === 0,
+      mudos.length ? "linha(s) " + mudos.join(", ") + " saem sem preencher nem marcar quem cuida" : "");
+
+    conferir(q.nome + ": tem prazo pra desistir e desenhar mesmo sem",
       /setTimeout/.test(corpo),
       "sem prazo, uma resposta que nunca chega trava a caixinha de novo");
+
+    /* E O ERRO TAMBÉM É RESPOSTA. A pedirSeriesDePrecos tinha um .catch que
+       só limpava a marca de "estou buscando" e ia embora: o estado continuava
+       vazio e ninguém redesenhava. Limpar a marca sem encher nem redesenhar
+       parece conserto e é a pior das saídas. */
+    const cat = corpo.indexOf(".catch(");
+    const depoisDoCatch = cat >= 0 ? corpo.slice(cat) : "";
+    conferir(q.nome + ": o erro de rede também enche o estado e redesenha",
+      cat < 0 || (new RegExp(q.estado + "\\s*=").test(depoisDoCatch) &&
+        /desenhar\s*\(/.test(depoisDoCatch)),
+      "o .catch limpa a marca mas deixa a tela esperando");
 
     /* A prova de que a rede pega o peixe: uma saída muda de mentira tem que
        ser acusada. Guarda nunca testada contra o caso ruim é fé, não guarda. */
     const comOErro = corpo.replace("{", "{" + SEPARADOR + "if (nada) return;" + SEPARADOR);
-    conferir("e a conferência pega uma saída muda de mentira",
-      saidasDeCima(comOErro).length === 1);
+    conferir(q.nome + ": a conferência pega uma saída muda de mentira",
+      saidasDeCima(comOErro, q).length === 1);
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * NENHUMA FUNÇÃO DO PAINEL TEM NOME REPETIDO
+ *
+ * O defeito, com a frase dele: "quando troco para outra aba e tento voltar pra
+ * carteira ela não vai". A caixa do resumo ficava em "medindo o rendimento…" e
+ * a aba da carteira parava de responder.
+ *
+ * O painel carrega uma CÓPIA de patrimonio.js e outra de livro.js coladas
+ * dentro da página — é assim que a mesma conta roda no servidor e no navegador
+ * dele. Só que cópia colada divide o espaço de nomes com o resto do painel. E
+ * o painel já tinha uma `ganhoDaPosicao(l)`, do trabalho da Orca, que devolve
+ * TEXTO. A cópia trouxe uma `ganhoDaPosicao(linha, eventos, vivoHoje, de, ate)`
+ * que devolve NÚMERO.
+ *
+ * Em JavaScript a de baixo apaga a de cima, calada. O resumo passou a chamar a
+ * de texto com cinco argumentos, `l.f` vinha undefined, e estourava
+ * `TypeError: Cannot read properties of undefined (reading 'posicao')` DENTRO
+ * de desenhar() — o desenho morria no meio e a tela inteira parava.
+ *
+ * Nada disso dá erro na publicação: dois `function` com o mesmo nome são
+ * JavaScript perfeitamente válido. `node --check` passa. O teste da crase
+ * passa. Só a tela dele reclamou.
+ *
+ * JÁ TINHA ACONTECIDO UMA VEZ, com `soODia`, e o que ficou daquela vez foi um
+ * comentário pedindo cuidado dentro do livro.js. Comentário não é guarda —
+ * dois dias depois o mesmo erro voltou com outro nome. Agora é teste.
+ * ------------------------------------------------------------------------- */
+titulo("Nenhuma função do painel tem nome repetido");
+{
+  /* Apaga comentário e texto PRESERVANDO as quebras de linha. Se o limpo tiver
+     menos linhas que o cru, o número da linha acusada aponta pro lugar errado —
+     e teste que aponta errado manda a gente procurar no lugar errado. */
+  const sohEspaco = (m) =>
+    m.split(SEPARADOR).map((l) => " ".repeat(l.length)).join(SEPARADOR);
+
+  const cru = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]).join(SEPARADOR);
+  const limpo = cru
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, sohEspaco)
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+
+  const linhas = limpo.split(SEPARADOR);
+  conferir("o limpador preserva as linhas (senão o número mente)",
+    linhas.length === cru.split(SEPARADOR).length);
+
+  /* Só o nível de cima: função dentro de função tem escopo próprio e pode
+     repetir nome à vontade — não é isso que faz mal. */
+  const ondeDeclara = new Map();
+  let nivel = 0;
+  for (let i = 0; i < linhas.length; i++) {
+    const antes = nivel;
+    for (const c of linhas[i]) { if (c === "{") nivel++; else if (c === "}") nivel--; }
+    const m = /^function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/.exec(linhas[i]);
+    if (!m || antes !== 0) continue;
+    if (!ondeDeclara.has(m[1])) ondeDeclara.set(m[1], []);
+    ondeDeclara.get(m[1]).push({ linha: i + 1, args: m[2].trim() });
   }
+
+  const repetidas = [...ondeDeclara.entries()].filter(([, o]) => o.length > 1);
+  conferir("nenhuma função de nível de cima é declarada duas vezes",
+    repetidas.length === 0,
+    repetidas.map(([nome, o]) =>
+      nome + " nas linhas " + o.map((x) => x.linha).join(" e ") +
+      " — a última apaga a primeira").join("; "));
+
+  /* A prova de que a rede pega o peixe. Duas declarações plantadas no texto
+     limpo têm que ser acusadas; guarda que nunca viu o caso ruim é fé. */
+  const plantado = limpo + SEPARADOR +
+    "function NOME_PLANTADO(a) { return a; }" + SEPARADOR +
+    "function NOME_PLANTADO(a, b) { return b; }" + SEPARADOR;
+  const achadas = [...plantado.matchAll(/^function\s+NOME_PLANTADO\s*\(/gm)];
+  conferir("e a conferência enxerga duas declarações do mesmo nome",
+    achadas.length === 2);
+
+  conferir("há mais de 150 funções no painel (a varredura está lendo mesmo)",
+    ondeDeclara.size > 150, ondeDeclara.size + " encontradas");
 }
 
 console.log(SEPARADOR + "-".repeat(60));

@@ -285,3 +285,60 @@ CREATE TABLE IF NOT EXISTS token_id (
   nome      TEXT,
   achado_em TEXT
 );
+
+/* O PREÇO DE CADA DIA, guardado.
+ *
+ * Por que existe: a conta do rendimento precisa do preço de cada dia desde o
+ * lançamento mais antigo (fev/2025), e buscar isso na fonte custava 5 a 12
+ * segundos TODA VEZ que a tela abria. A resposta até mandava o navegador
+ * guardar por meia hora, mas o pedido é POST — e navegador nunca guarda
+ * resposta de POST. O service worker também pula tudo que é /api/. Ou seja: o
+ * cabeçalho de cache não fazia absolutamente nada, e ele pagava o preço
+ * inteiro a cada abertura.
+ *
+ * E o dado é o mais guardável que existe: o preço de um dia que já fechou
+ * NUNCA MUDA.
+ *
+ * TRÊS REGRAS, e cada uma corrige um jeito de errar:
+ *
+ * 1. A CHAVE É O id DA FONTE, não o símbolo. Símbolo é rótulo e troca de
+ *    dono: MATIC virou POL, TON passou a devolver GRAM, FXS virou FRAX — os
+ *    três já morderam este projeto. Guardar 'MATIC' seria guardar o preço de
+ *    uma moeda embaixo do nome de outra.
+ *
+ * 2. O DIA DE HOJE NUNCA É GUARDADO. O preço de hoje ainda está andando;
+ *    congelá-lo aqui faria a tela mostrar o preço da manhã até a meia-noite,
+ *    e o "rendeu nas últimas 24 horas" mentiria o dia inteiro. Só entra dia
+ *    que já fechou.
+ *
+ * 3. GRAVAÇÃO SÓ DO QUE FALTA (INSERT OR IGNORE), nunca REPLACE. O D1 conta
+ *    escrita, REPLACE conta dobrado (apaga e grava), e foi por limite de
+ *    escrita que este projeto migrou de plano. Dia que já está guardado não
+ *    se regrava: ele não muda.
+ */
+CREATE TABLE IF NOT EXISTS preco_dia (
+  id    TEXT NOT NULL,      -- 'bitcoin', o id da fonte
+  dia   TEXT NOT NULL,      -- '2026-09-12'
+  preco REAL NOT NULL,
+  PRIMARY KEY (id, dia)
+);
+
+/* ATÉ ONDE A FONTE ALCANÇA, por moeda.
+ *
+ * Sem isto, o real (BRL) mandaria buscar 790 dias para sempre: a fonte só tem
+ * câmbio desde nov/2025, então a tabela de cima NUNCA teria os 790, e a conta
+ * "falta dia, vai buscar" daria verdadeiro em toda abertura — um cache que
+ * nunca acerta é pior que cache nenhum, porque custa a consulta e a busca.
+ *
+ * 'pedimos' guarda a MAIOR janela já pedida. Se a janela de agora cabe nela, o
+ * que está guardado é tudo o que a fonte tem a dar, e não se pergunta de novo.
+ * A diferença entre "não tenho" e "não existe" é a mesma da receita 2.5, e é a
+ * que decide se vale a pena ir à rede.
+ */
+CREATE TABLE IF NOT EXISTS preco_alcance (
+  id       TEXT PRIMARY KEY,
+  pedimos  INTEGER NOT NULL,   -- a maior janela já pedida, em dias
+  de       TEXT,               -- o dia mais antigo que a fonte deu
+  ate      TEXT,               -- o dia mais novo já guardado
+  visto_em TEXT
+);

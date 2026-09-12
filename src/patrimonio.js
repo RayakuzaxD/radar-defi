@@ -634,6 +634,15 @@ export function ganhoDaPosicao(linha, eventos, vivoHoje, de, ate) {
   const base = Number(linha.valor_entrada);
   if (!Number.isFinite(base)) return null;
 
+  /* SEM DATA DE ENTRADA NÃO DÁ PRA RESPONDER.
+   *
+   * Toda a conta abaixo pergunta "ela já existia no começo da janela?". Sem a
+   * data, a resposta saía "não" por omissão, o valor do começo ficava zero e a
+   * posição INTEIRA virava ganho. Devolver null faz a janela dizer
+   * "incompleta", que é a verdade: falta um fato, e faltar fato não autoriza
+   * inventar número. */
+  if (!entrou) return null;
+
   /* Quanto ela valia no começo da janela: a entrada mais as mexidas até lá.
      Se ela nasceu dentro da janela, começou do zero. */
   let noComeco = 0;
@@ -652,11 +661,39 @@ export function ganhoDaPosicao(linha, eventos, vivoHoje, de, ate) {
 
   /* O que entrou e saiu DELA no período — isso não é ganho dela. */
   let mexidas = 0;
+  let aportou = false;
   for (const e of eventos || []) {
     if (e.quando <= de || e.quando > ate) continue;
     if (e.especie === RENDIMENTO_NO_LIVRO) continue;
     mexidas += e.usd;
+    if (e.usd > 0) aportou = true;
   }
+
+  /* A POOL NÃO NASCE DO NADA — e esta linha custou o número mais errado que a
+   * tela dele já mostrou.
+   *
+   * Uma pool aberta DENTRO da janela começa valendo zero (certo) e vale hoje o
+   * que a cadeia diz. O dinheiro que a encheu sai daqui, do 'mexidas'. Mas o
+   * 'mexidas' só enxerga os eventos LIDOS DA BLOCKCHAIN — e quando eles não
+   * chegam (rede lenta, leitura que falhou, prazo estourado), ele dá zero.
+   *
+   * Aí a conta virava: vale 198 hoje, valia 0 no começo, nada entrou → rendeu
+   * 198. A pool inteira como lucro. Em 12/09/2026 isso pôs "+US$ 1.005 · 41,9%
+   * do total" num mês que tinha rendido US$ 257, e ele viu na hora: cbbt/USDC
+   * "+198,27" é o VALOR da pool, não o que ela rendeu. É a mesma mentira que
+   * ele já tinha me apontado dias antes — "lançamento de pools estão somando
+   * como lucro" —, agora entrando por outra porta.
+   *
+   * A verdade é que o valor de entrada SEMPRE existe: é o quanto ela custou,
+   * gravado na linha. Quando não há nenhum aporte registrado no período para
+   * uma posição que nasceu dentro dele, é esse valor que atravessou a
+   * fronteira. Não é estimativa — é o fato que estava ali o tempo todo, sem
+   * ninguém perguntar.
+   *
+   * E o teste da existência é 'houve aporte', não 'a lista está vazia': uma
+   * posição cuja cadeia só trouxe a colheita também precisa da entrada. */
+  const nasceuDentro = entrou > de;
+  if (nasceuDentro && !aportou) mexidas += base;
 
   return noFim - noComeco - mexidas;
 }

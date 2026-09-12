@@ -3767,6 +3767,15 @@ function ganhoDaPosicao(linha, eventos, vivoHoje, de, ate) {
   const base = Number(linha.valor_entrada);
   if (!Number.isFinite(base)) return null;
 
+  /* SEM DATA DE ENTRADA NÃO DÁ PRA RESPONDER.
+   *
+   * Toda a conta abaixo pergunta "ela já existia no começo da janela?". Sem a
+   * data, a resposta saía "não" por omissão, o valor do começo ficava zero e a
+   * posição INTEIRA virava ganho. Devolver null faz a janela dizer
+   * "incompleta", que é a verdade: falta um fato, e faltar fato não autoriza
+   * inventar número. */
+  if (!entrou) return null;
+
   /* Quanto ela valia no começo da janela: a entrada mais as mexidas até lá.
      Se ela nasceu dentro da janela, começou do zero. */
   let noComeco = 0;
@@ -3785,11 +3794,39 @@ function ganhoDaPosicao(linha, eventos, vivoHoje, de, ate) {
 
   /* O que entrou e saiu DELA no período — isso não é ganho dela. */
   let mexidas = 0;
+  let aportou = false;
   for (const e of eventos || []) {
     if (e.quando <= de || e.quando > ate) continue;
     if (e.especie === RENDIMENTO_NO_LIVRO) continue;
     mexidas += e.usd;
+    if (e.usd > 0) aportou = true;
   }
+
+  /* A POOL NÃO NASCE DO NADA — e esta linha custou o número mais errado que a
+   * tela dele já mostrou.
+   *
+   * Uma pool aberta DENTRO da janela começa valendo zero (certo) e vale hoje o
+   * que a cadeia diz. O dinheiro que a encheu sai daqui, do 'mexidas'. Mas o
+   * 'mexidas' só enxerga os eventos LIDOS DA BLOCKCHAIN — e quando eles não
+   * chegam (rede lenta, leitura que falhou, prazo estourado), ele dá zero.
+   *
+   * Aí a conta virava: vale 198 hoje, valia 0 no começo, nada entrou → rendeu
+   * 198. A pool inteira como lucro. Em 12/09/2026 isso pôs "+US$ 1.005 · 41,9%
+   * do total" num mês que tinha rendido US$ 257, e ele viu na hora: cbbt/USDC
+   * "+198,27" é o VALOR da pool, não o que ela rendeu. É a mesma mentira que
+   * ele já tinha me apontado dias antes — "lançamento de pools estão somando
+   * como lucro" —, agora entrando por outra porta.
+   *
+   * A verdade é que o valor de entrada SEMPRE existe: é o quanto ela custou,
+   * gravado na linha. Quando não há nenhum aporte registrado no período para
+   * uma posição que nasceu dentro dele, é esse valor que atravessou a
+   * fronteira. Não é estimativa — é o fato que estava ali o tempo todo, sem
+   * ninguém perguntar.
+   *
+   * E o teste da existência é 'houve aporte', não 'a lista está vazia': uma
+   * posição cuja cadeia só trouxe a colheita também precisa da entrada. */
+  const nasceuDentro = entrou > de;
+  if (nasceuDentro && !aportou) mexidas += base;
 
   return noFim - noComeco - mexidas;
 }
@@ -3813,6 +3850,10 @@ const RENDIMENTO_NO_LIVRO = "rendimento";
  * so o encanamento: buscar o preco de cada dia, montar a serie e desenhar. */
 var serieDePrecos = null;
 var serieBuscando = false;
+/* A leitura do preco de cada dia nao veio. A conta segue com o que tem, e a
+   tela DIZ que seguiu — numero incompleto sem aviso e pior que numero
+   faltando. Igual ao semMexidasDaCadeia, pelo mesmo motivo. */
+var semSerieDePrecos = false;
 
 function pedirSeriesDePrecos() {
   if (serieBuscando || serieDePrecos) return;
@@ -3829,7 +3870,11 @@ function pedirSeriesDePrecos() {
     if (String(f.moeda || "").toUpperCase() === "BRL") tokens.BRL = 1;
   });
   var lista = Object.keys(tokens);
-  if (!lista.length) return;
+  /* NADA A PEDIR JA E UMA RESPOSTA. Saindo calada aqui, serieDePrecos ficava
+     null pra sempre e a tela esperava um preco que ninguem ia buscar — o mesmo
+     beco sem saida da pedirSombrasDaCadeia. Quem so tem pool e dolar cai
+     exatamente neste caminho. */
+  if (!lista.length) { serieDePrecos = {}; return; }
 
   var maisVelho = null;
   Object.keys(movimentos).forEach(function (k) {
@@ -3844,6 +3889,20 @@ function pedirSeriesDePrecos() {
     dias = Math.min(790, Math.max(370, idade + 10));
   }
   serieBuscando = true;
+
+  /* O PRAZO, pelo mesmo motivo da irma: promessa que nunca resolve nao chama
+     o .catch(). A rota leva de 5 a 12 segundos quando a fonte esta lenta —
+     trinta da folga de sobra, e passado isso a tela segue dizendo o que
+     faltou em vez de girar pra sempre. */
+  setTimeout(function () {
+    if (serieBuscando) {
+      serieBuscando = false;
+      serieDePrecos = {};
+      semSerieDePrecos = true;
+      desenhar();
+    }
+  }, 30000);
+
   fetch("/api/historico?v=${VERSAO}", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -3855,7 +3914,17 @@ function pedirSeriesDePrecos() {
     serieDePrecos = (j && j.series) || {};
     serieBuscando = false;
     desenhar();
-  }).catch(function () { serieBuscando = false; });
+  }).catch(function () {
+    /* ERRO DE REDE TAMBEM E RESPOSTA. A versao antiga so limpava a marca de
+       "estou buscando" e ia embora: serieDePrecos continuava null, ninguem
+       redesenhava, e a tela ficava em "medindo o rendimento..." ate ele
+       recarregar o aplicativo. Limpar a marca sem encher o estado e sem
+       redesenhar e a pior das tres saidas — parece conserto e nao e. */
+    serieBuscando = false;
+    serieDePrecos = {};
+    semSerieDePrecos = true;
+    desenhar();
+  });
 }
 
 /* O preco mais proximo pra tras. Fim de semana nao existe pra cambio, e o
@@ -4281,6 +4350,11 @@ function blocoDoRendimento(c) {
       ? '<div class="fatoNota">não consegui ler as suas mexidas de pool na ' +
         'blockchain agora — as posições entram pelo valor de entrada, e o que ' +
         'elas renderam pode estar incompleto.</div>'
+      : "") +
+    (semSerieDePrecos
+      ? '<div class="fatoNota">não consegui ler o preço de cada dia agora — ' +
+        'sem ele não dá pra dizer quanto rendeu. Puxe a tela pra baixo pra ' +
+        'tentar de novo.</div>'
       : "") +
     '<div class="fatoQuando">posições valem a entrada no passado e o valor vivo hoje · ' +
       'preços diários do DefiLlama</div>' +
@@ -7865,7 +7939,26 @@ function composicaoDaPosicao(pos) {
     (100 - pa).toFixed(0) + "% " + esc(pos.simboloB);
 }
 
-function ganhoDaPosicao(l) {
+/* O TEXTO que explica o ganho de uma posição na linha dela. Devolve HTML.
+ *
+ * O NOME LEVA "texto" NA FRENTE DE PROPOSITO, e custou a tela dele inteira.
+ *
+ * Esta funcao se chamava ganhoDaPosicao, sem mais nada. Em 11/09/2026 a conta
+ * do resumo trouxe do patrimonio.js uma OUTRA ganhoDaPosicao — cinco argumentos,
+ * devolve numero — e as duas passaram a morar no mesmo escopo do navegador,
+ * porque a copia do modulo e colada aqui dentro.
+ *
+ * Em JavaScript a declaracao de baixo APAGA a de cima. Entao o resumo chamava
+ * esta aqui com cinco argumentos, o l.f vinha undefined, e estourava
+ * TypeError DENTRO de desenhar(). O desenho parava no meio: a caixa ficava em
+ * "medindo o rendimento..." pra sempre e a aba da carteira nao voltava mais
+ * quando ele trocava de aba. Ele descreveu exatamente isso: "quando troco para
+ * outra aba e tento voltar pra carteira ela nao vai".
+ *
+ * Duas funcoes com o mesmo nome nao dao erro nenhum na publicacao. O unico
+ * jeito de isso nao voltar e um teste, e ele existe: "nenhuma funcao do painel
+ * tem nome repetido", em testar-painel.js. */
+function textoDoGanhoDaPosicao(l) {
   var f = l.f;
   if (!f.posicao || l.convertido == null || l.emUSD == null) return "";
   var pos = l.posicao;
@@ -8873,7 +8966,7 @@ function linhaVista(l, totalDaCaixa) {
         ' <button class="btDeNovo" data-endereco="' + esc(f.posicao) + '">tentar de novo</button>' +
       '</div>'
     : "") +
-  ganhoDaPosicao(l) +
+  textoDoGanhoDaPosicao(l) +
   resultadoDoDinheiro(l) +
   perguntaDeMudanca(l.f) +
   extratoDaLinha(l) +

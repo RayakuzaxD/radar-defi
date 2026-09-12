@@ -23,7 +23,7 @@
 import {
   fluxoExterno, mexeNaQuantidade, quantidadeNaData, valorNaData,
   rendimentoDoPeriodo, lucroDesdeOComeco, JANELAS,
-  ehRemanejamento, fluxoDoPatrimonio,
+  ehRemanejamento, fluxoDoPatrimonio, ganhoDaPosicao,
 } from "./src/patrimonio.js";
 
 let passou = 0, falhou = 0;
@@ -597,6 +597,107 @@ titulo("A CÓPIA DO NAVEGADOR É LITERAL (receita 5.3)");
     dentro.trim() === esperado.trim(),
     "tamanhos: painel " + dentro.trim().length + " × módulo " + esperado.trim().length);
   conferir("e não sobrou crase nenhuma dentro dela", !dentro.includes(CRASE));
+}
+
+// ---------------------------------------------------------------------------
+/* A POOL NÃO NASCE DO NADA.
+ *
+ * O caso real, com os números da tela dele em 12/09/2026. A caixa mostrou:
+ *
+ *     1 mês   +US$ 1.005,02 · +41,9% do total
+ *     de onde: cbbt/USDC na Orca +US$ 198,27 · SOL/ETH na Orca +US$ 166,99
+ *
+ * Ele viu na hora que 198,27 é o VALOR daquela pool, não o que ela rendeu —
+ * está escrito na outra aba. O mês inteiro tinha rendido US$ 257.
+ *
+ * A conta é: vale hoje − valia no começo − o que entrou e saiu. Pool aberta
+ * DENTRO da janela vale zero no começo (certo). Mas "o que entrou" só enxerga
+ * os eventos lidos da blockchain, e quando eles não chegam dá zero. Então
+ * 198 − 0 − 0 = 198: a pool inteira vira lucro.
+ *
+ * É a mesma mentira que ele já tinha apontado dias antes — "lançamento de
+ * pools estão somando como lucro" — entrando por outra porta. E o valor de
+ * entrada estava gravado na linha o tempo todo.
+ * ------------------------------------------------------------------------- */
+titulo("A pool não nasce do nada");
+
+{
+  /* Os números dele: pool aberta em 11/09 por US$ 197,72, valendo US$ 198,96
+     hoje. A cadeia não respondeu, então não há evento nenhum. */
+  const pool = {
+    chave: "p1", posicao: "ALGUMA", data_entrada: "2026-09-11",
+    valor_entrada: 197.72,
+  };
+  const g = ganhoDaPosicao(pool, [], 198.96, "2026-08-13", "2026-09-12");
+  conferir("pool aberta dentro da janela, sem leitura da cadeia, rende a DIFERENÇA",
+    Math.abs(g - 1.24) < 0.005, "veio " + g);
+  conferir("e não o valor inteiro dela", Math.abs(g - 198.96) > 100,
+    "198,96 seria a pool inteira virando lucro");
+}
+
+{
+  /* COM a leitura da cadeia, o aporte de abertura vem nos eventos — e aí somar
+     o valor de entrada de novo contaria o mesmo dinheiro duas vezes. */
+  const pool = {
+    chave: "p1", posicao: "ALGUMA", data_entrada: "2026-09-11",
+    valor_entrada: 197.72,
+  };
+  const eventos = [{ quando: "2026-09-11", usd: 197.72, especie: "novo" }];
+  const g = ganhoDaPosicao(pool, eventos, 198.96, "2026-08-13", "2026-09-12");
+  conferir("com a cadeia lida, o aporte não é contado duas vezes",
+    Math.abs(g - 1.24) < 0.005, "veio " + g);
+}
+
+{
+  /* A cadeia trouxe SÓ a colheita. Colher não é aportar: a entrada continua
+     faltando, e continua tendo que ser suprida. */
+  const pool = {
+    chave: "p1", posicao: "ALGUMA", data_entrada: "2026-09-11",
+    valor_entrada: 197.72,
+  };
+  const eventos = [{ quando: "2026-09-11", usd: 0.69, especie: "rendimento" }];
+  const g = ganhoDaPosicao(pool, eventos, 198.96, "2026-08-13", "2026-09-12");
+  conferir("lista com só a colheita ainda precisa da entrada",
+    Math.abs(g - 1.24) < 0.005, "veio " + g);
+}
+
+{
+  /* Pool ANTIGA, aberta antes da janela: aí o valor de entrada já está no
+     "valia no começo" e somá-lo de novo cortaria o ganho pela metade. */
+  const pool = {
+    chave: "p1", posicao: "ALGUMA", data_entrada: "2026-01-05",
+    valor_entrada: 100,
+  };
+  const g = ganhoDaPosicao(pool, [], 110, "2026-08-13", "2026-09-12");
+  conferir("pool aberta ANTES da janela rende sobre o valor dela",
+    Math.abs(g - 10) < 0.005, "veio " + g);
+}
+
+{
+  /* SEM DATA DE ENTRADA a pergunta "já existia no começo?" não tem resposta.
+     Por omissão saía "não", o começo virava zero e a posição inteira virava
+     ganho — o mesmo defeito por outra porta. Falta de fato não autoriza
+     inventar número: a janela diz "incompleta". */
+  const pool = { chave: "p1", posicao: "ALGUMA", valor_entrada: 100 };
+  conferir("sem data de entrada, devolve null em vez de inventar",
+    ganhoDaPosicao(pool, [], 110, "2026-08-13", "2026-09-12") === null);
+}
+
+{
+  /* E A REGRA DELE, aplicada: aumentar uma pool não é valorização. */
+  const pool = {
+    chave: "p1", posicao: "ALGUMA", data_entrada: "2026-01-05",
+    valor_entrada: 100,
+  };
+  const eventos = [{ quando: "2026-09-01", usd: 500, especie: "novo" }];
+  const g = ganhoDaPosicao(pool, eventos, 610, "2026-08-13", "2026-09-12");
+  conferir("pôr mais dinheiro numa pool não vira lucro",
+    Math.abs(g - 10) < 0.005, "veio " + g);
+
+  const saque = [{ quando: "2026-09-01", usd: -50, especie: "novo" }];
+  const g2 = ganhoDaPosicao(pool, saque, 60, "2026-08-13", "2026-09-12");
+  conferir("e tirar dinheiro dela não vira prejuízo",
+    Math.abs(g2 - 10) < 0.005, "veio " + g2);
 }
 
 console.log("\n" + "-".repeat(60));
