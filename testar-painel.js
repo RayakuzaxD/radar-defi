@@ -831,6 +831,61 @@ titulo("Taxa não recolhida entra no valor, uma vez só");
     Math.abs((comTaxa - semTaxa) - 2.64) < 0.02);
 }
 
+/* ---------------------------------------------------------------------------
+ * NÚMERO QUE JÁ ESTÁ DENTRO DE OUTRO TEM QUE DIZER ISSO
+ *
+ * Ele somou o print na calculadora: oito parcelas, US$ 10,81, onde a tela
+ * dizia 8. A frase que explica tudo: "achei que cada soma ali era o certo".
+ *
+ * A tela mostrava, uma embaixo da outra:
+ *
+ *     taxas acumuladas: US$ 0,39
+ *     US$ 162,92 → US$ 168,23 · +US$ 5,41
+ *
+ * Duas linhas que parecem duas parcelas. Não são: a de baixo já engole a de
+ * cima. Somar as duas conta a taxa duas vezes — e foi o que ele fez, e o que
+ * qualquer pessoa faria.
+ *
+ * Pior: a valorização PURA não aparecia em canto nenhum. A conta que ele
+ * queria — preço mais taxa menos perda — era impossível de montar com o que
+ * estava escrito. Faltavam três dos quatro pedaços.
+ *
+ * Dois consertos, e os dois são de LINGUAGEM, não de aritmética: a taxa diz
+ * que já está contada, e o resultado mostra de onde veio.
+ * ------------------------------------------------------------------------- */
+titulo("Número que já está dentro de outro diz que está");
+{
+  conferir("a taxa acumulada avisa que já está no valor",
+    /já contadas no valor/.test(html),
+    "sem isso, a linha de cima e a de baixo parecem duas parcelas somáveis");
+
+  conferir("e o resultado da posição mostra de onde veio",
+    /de preço/.test(html) && /de taxa na pool/.test(html),
+    "sem a decomposição, a valorização pura não existe em lugar nenhum da tela");
+
+  conferir("a taxa já colhida também aparece quando houve",
+    /já colhido/.test(html),
+    "colher tira a taxa da pool mas não do lucro — some da tela se não for dita");
+
+  /* AS PARTES TÊM QUE SOMAR O TODO, por construção e não por sorte.
+   *
+   * A decomposição é `ganho − pendente − realizado` pro preço. Se ela fosse
+   * calculada por outro caminho, as três partes poderiam não fechar com o
+   * número grande — e três partes que não somam o todo é pior que não mostrar
+   * parte nenhuma: convida exatamente a soma errada que este conserto evita. */
+  const i = html.indexOf("var dePreco");
+  conferir("o preço sai do ganho menos as taxas, não de outra conta",
+    i > 0 && /var dePreco = r\.ganho - pend - realizado;/.test(html),
+    "calcular por fora deixaria as partes sem fechar com o total");
+
+  /* E a aritmética dele, guardada: as partes de uma pool real. A primeira é a
+     que mais ensina — parece uma perdinha de nada e esconde duas notícias. */
+  const preco = 99.17 - 100.26, taxa = 0.93;
+  conferir("a pool que mostra −0,16 é −1,09 de preço com +0,93 de taxa",
+    Math.abs((preco + taxa) - (-0.16)) < 0.01,
+    (preco + taxa).toFixed(2));
+}
+
 console.log(SEPARADOR + "-".repeat(60));
 console.log(falhou === 0 ? `TUDO VERDE — ${passou} conferências` : `${falhou} FALHARAM (de ${passou + falhou})`);
 process.exit(falhou === 0 ? 0 : 1);

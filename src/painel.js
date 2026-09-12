@@ -8197,8 +8197,19 @@ function textoDoGanhoDaPosicao(l) {
             ? "menos de um centavo"
             : "cerca de " + dinheiroMiudo(c.dolar, "USD")) + "</span>";
       }
+      /* "JA CONTADAS" e uma palavra que custou uma calculadora.
+       *
+       * Esta linha dizia so "taxas acumuladas: US$ 0,39", e logo abaixo vinha
+       * o resultado da posicao — que ja inclui essas taxas. Ele leu as duas
+       * como parcelas e somou: "achei que cada soma ali era o certo". Deu
+       * US$ 10,81 onde era 8.
+       *
+       * Duas palavras evitam a soma errada. Sem elas, o proximo a somar seria
+       * ele daqui a um mes, ou qualquer pessoa que abrisse o painel. */
       linhas += '<div class="lvAviso sobe">taxas acumuladas: ' +
-        dinheiroMiudo(t.emDolar, "USD") + viagem + aperto + "</div>";
+        dinheiroMiudo(t.emDolar, "USD") +
+        ' <span class="onde">(já contadas no valor)</span>' +
+        viagem + aperto + "</div>";
     }
   }
 
@@ -8324,6 +8335,50 @@ function resultadoDoDinheiro(l) {
       ' · ' + (sobe ? "+" : "") + dinheiroMiudo(r.ganho, "USD") +
       (r.pct == null ? "" : " (" + (r.pct >= 0 ? "+" : "") + r.pct.toFixed(1) + "%)") +
       (resumo.desde ? " · desde " + esc(resumo.desde) : "") + "</div>";
+  }
+
+  /* DE ONDE VEIO O NUMERO — e esta linha nasceu de uma confusao dele.
+   *
+   * Ele somou o print na calculadora e deu US$ 10,81 onde a tela dizia 8. A
+   * conta dele: pegou o "+5,41" de cada pool e somou as "taxas acumuladas"
+   * por fora. A frase que explica tudo: "achei que cada soma ali era o certo".
+   *
+   * E a tela dava mesmo essa impressao. Ela mostrava "taxas acumuladas:
+   * US$ 0,39" numa linha e "+US$ 5,41" na de baixo, como se fossem duas
+   * parcelas. Nao sao: a de baixo JA ENGOLE a de cima. Somar as duas conta a
+   * taxa duas vezes.
+   *
+   * Pior: a valorizacao PURA nao aparecia em lugar nenhum da tela. Entao a
+   * conta que ele queria fazer — preco mais taxa menos perda — era impossivel
+   * de montar com o que estava escrito ali. Faltavam os pedacos.
+   *
+   * Agora as partes aparecem, e elas somam o total por construcao:
+   *
+   *     preco       o que a liquidez fez de valor (pode ser negativo)
+   *     taxa        o que a pool cobrou e ainda esta dentro dela
+   *     colhido     taxa que ele ja recolheu (so aparece quando houve)
+   *
+   * A primeira pool dele e o melhor exemplo de por que separar importa: ela
+   * mostra "-0,16", que parece uma perdinha de nada. Separada, ela e
+   * "-1,09 de preco" com "+0,93 de taxa" — a pool perdeu valor de verdade, e
+   * a taxa quase cobriu. Sao duas noticias diferentes, e o numero somado
+   * escondia as duas. */
+  if (f.posicao && !somenteRuido) {
+    var pend = r.pendente;
+    var realizado = r.realizado || 0;
+    /* So da pra decompor quando a taxa foi LIDA. Sem ela, o "preco" seria o
+       ganho inteiro — e dizer "tudo isso e preco" quando eu nao sei quanto
+       foi taxa e inventar precisao. */
+    if (pend != null && isFinite(pend)) {
+      var dePreco = r.ganho - pend - realizado;
+      var comSinal = function (v) {
+        return (v >= 0 ? "+" : "−") + dinheiroMiudo(Math.abs(v), "USD");
+      };
+      var partes = comSinal(dePreco) + " de preço";
+      if (Math.abs(pend) >= 0.005) partes += " · " + comSinal(pend) + " de taxa na pool";
+      if (Math.abs(realizado) >= 0.005) partes += " · " + comSinal(realizado) + " já colhido";
+      txt += '<div class="fatoNota">de onde: ' + partes + "</div>";
+    }
   }
 
   /* AS TRES LINHAS QUE O MÉTODO SEPARA, quando a posição é uma pool.
